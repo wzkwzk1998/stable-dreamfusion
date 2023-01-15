@@ -367,7 +367,7 @@ class Trainer(object):
         # print(shading)
         # torch_vis_2d(pred_rgb[0])
         
-        # text embeddings
+        # get text embeddings
         if self.opt.dir_text:
             dirs = data['dir'] # [B,]
             text_z = self.text_z[dirs]
@@ -376,7 +376,10 @@ class Trainer(object):
         
         # encode pred_rgb to latents
         # _t = time.time()
-        loss = self.guidance.train_step(text_z, pred_rgb)
+        if self.opt.use_diffusion_grad:
+            loss = self.guidance.train_step_with_diffusion_grad(text_z, pred_rgb)
+        else:
+            loss = self.guidance.train_step(text_z, pred_rgb)
         # torch.cuda.synchronize(); print(f'[TIME] total guiding {time.time() - _t:.4f}s')
 
         # occupancy loss

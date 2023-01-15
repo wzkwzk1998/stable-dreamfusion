@@ -1,7 +1,8 @@
 import torch
 import argparse
+import configargparse
 
-from nerf.provider import NeRFDataset
+from dataset.dreamfusion_dataset import DreamfusionDataset
 from nerf.utils import *
 
 from nerf.gui import NeRFGUI
@@ -10,17 +11,21 @@ from nerf.gui import NeRFGUI
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser()
+    parser = configargparse.ArgumentParser(config_file_parser_class=configargparse.YAMLConfigFileParser)
+    parser.add_argument('--config', is_config_file=True,  help='config file path')
     parser.add_argument('--text', default=None, help="text prompt")
     parser.add_argument('--negative', default='', type=str, help="negative text prompt")
-    parser.add_argument('-O', action='store_true', help="equals --fp16 --cuda_ray --dir_text")
-    parser.add_argument('-O2', action='store_true', help="equals --backbone vanilla --dir_text")
+    parser.add_argument('-O', '--O_machine', action='store_true', help="equals --fp16 --cuda_ray --dir_text")
+    parser.add_argument('-O2', '--O2_machine', action='store_true', help="equals --backbone vanilla --dir_text")
     parser.add_argument('--test', action='store_true', help="test mode")
     parser.add_argument('--save_mesh', action='store_true', help="export an obj mesh with texture")
     parser.add_argument('--eval_interval', type=int, default=10, help="evaluate on the valid set every interval epochs")
     parser.add_argument('--workspace', type=str, default='workspace')
-    parser.add_argument('--guidance', type=str, default='stable-diffusion', help='choose from [stable-diffusion, clip]')
+    parser.add_argument('--guidance', type=str, default='stable-diffusion', help='choose from [stable-diffusion, clip, stable-diffusion-inpainting]')
     parser.add_argument('--seed', type=int, default=0)
+
+    ### dataset options
+    parser.add_argument
 
     ### training options
     parser.add_argument('--iters', type=int, default=10000, help="training iters")
@@ -37,6 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--albedo', action='store_true', help="only use albedo shading to train, overrides --albedo_iters")
     parser.add_argument('--albedo_iters', type=int, default=1000, help="training iters that only use albedo shading")
     parser.add_argument('--uniform_sphere_rate', type=float, default=0.5, help="likelihood of sampling camera location uniformly on the sphere surface area")
+    parser.add_argument('--use_diffusion_grad', action='store_true', help='set true to use diffusion gradient to calculate image gradient when training')
     # model options
     parser.add_argument('--bg_radius', type=float, default=1.4, help="if positive, use a background model at sphere(bg_radius)")
     parser.add_argument('--density_thresh', type=float, default=10, help="threshold for density grid to be occupied")
@@ -81,12 +87,12 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-    if opt.O:
+    if opt.O_machine:
         opt.fp16 = True
         opt.dir_text = True
         opt.cuda_ray = True
 
-    elif opt.O2:
+    elif opt.O2_machine:
         # only use fp16 if not evaluating normals (else lead to NaNs in training...)
         if opt.albedo:
             opt.fp16 = True
@@ -123,7 +129,7 @@ if __name__ == '__main__':
             gui.render()
         
         else:
-            test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=100).dataloader()
+            test_loader = DreamfusionDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=100).dataloader()
             trainer.test(test_loader)
             
             if opt.save_mesh:
@@ -131,8 +137,9 @@ if __name__ == '__main__':
     
     else:
         
-        train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=100).dataloader()
+        train_loader = DreamfusionDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=100).dataloader()
 
+        # Choose Optimizer
         if opt.optim == 'adan':
             from optimizer import Adan
             # Adan usually requires a larger LR
@@ -140,6 +147,7 @@ if __name__ == '__main__':
         else: # adam
             optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
 
+        # Choose Nerf backbone
         if opt.backbone == 'vanilla':
             warm_up_with_cosine_lr = lambda iter: iter / opt.warm_iters if iter <= opt.warm_iters \
                 else max(0.5 * ( math.cos((iter - opt.warm_iters) /(opt.iters - opt.warm_iters) * math.pi) + 1), 
@@ -150,12 +158,19 @@ if __name__ == '__main__':
             scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 1) # fixed
             # scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
 
+        # Choose diffusion model
         if opt.guidance == 'stable-diffusion':
-            from nerf.sd import StableDiffusion
+            from guidance.sd import StableDiffusion
             guidance = StableDiffusion(device, opt.sd_version, opt.hf_key)
+        elif opt.guidance == 'stable-diffusion-inpainting':
+            from guidance.stable_diffusion_inpainting import StableDiffusionForInpainting
+            guidance = StableDiffusionForInpainting(device)
         elif opt.guidance == 'clip':
-            from nerf.clip import CLIP
+            from guidance.clip import CLIP
             guidance = CLIP(device)
+        elif opt.guidance == 'reconstruction':
+            from guidance.image_reconstruction import ImageReconstruction
+            guidance = ImageReconstruction(device)
         else:
             raise NotImplementedError(f'--guidance {opt.guidance} is not implemented.')
 
@@ -168,7 +183,7 @@ if __name__ == '__main__':
             gui.render()
         
         else:
-            valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader()
+            valid_loader = DreamfusionDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader()
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, max_epoch)

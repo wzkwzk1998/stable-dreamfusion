@@ -1,0 +1,12 @@
+# experiment base setting
+workspace: ./logs/dreamfusion_roses
+O_machine: true
+
+# guidance setting
+guidance: stable-diffusion
+text: 'a DSLR photo of a rose'
+
+# NeRF setting
+# Training Setting
+iters: 15000
+# 

@@ -1,7 +1,7 @@
 import torch
 import argparse
 
-from nerf.provider import NeRFDataset
+from dataset.provider import NeRFDataset
 from nerf.utils import *
 
 import gradio as gr
@@ -101,10 +101,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'[INFO] loading models..')
 
 if opt.guidance == 'stable-diffusion':
-    from nerf.sd import StableDiffusion
+    from diffusion_model.sd import StableDiffusion
     guidance = StableDiffusion(device, opt.sd_version, opt.hf_key)
 elif opt.guidance == 'clip':
-    from nerf.clip import CLIP
+    from guidance.clip import CLIP
     guidance = CLIP(device)
 else:
     raise NotImplementedError(f'--guidance {opt.guidance} is not implemented.')
