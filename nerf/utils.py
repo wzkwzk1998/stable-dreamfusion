@@ -195,6 +195,17 @@ class Trainer(object):
         self.scheduler_update_every_step = scheduler_update_every_step
         self.device = device if device is not None else torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
         self.console = Console()
+        
+        # log prepare
+        self.log_ptr = None
+        if self.workspace is not None:
+            os.makedirs(self.workspace, exist_ok=True)        
+            self.log_path = os.path.join(workspace, f"log_{self.name}.txt")
+            self.log_ptr = open(self.log_path, "a+")
+
+            self.ckpt_path = os.path.join(self.workspace, 'checkpoints')
+            self.best_path = f"{self.ckpt_path}/{self.name}.pth"
+            os.makedirs(self.ckpt_path, exist_ok=True)
     
         model.to(self.device)
         if self.world_size > 1:
@@ -211,7 +222,7 @@ class Trainer(object):
             for p in self.guidance.parameters():
                 p.requires_grad = False
 
-            self.prepare_text_embeddings()
+            self.prepare_guidance_condition()
         
         else:
             self.text_z = None
@@ -254,15 +265,6 @@ class Trainer(object):
             self.best_mode = 'min'
 
         # workspace prepare
-        self.log_ptr = None
-        if self.workspace is not None:
-            os.makedirs(self.workspace, exist_ok=True)        
-            self.log_path = os.path.join(workspace, f"log_{self.name}.txt")
-            self.log_ptr = open(self.log_path, "a+")
-
-            self.ckpt_path = os.path.join(self.workspace, 'checkpoints')
-            self.best_path = f"{self.ckpt_path}/{self.name}.pth"
-            os.makedirs(self.ckpt_path, exist_ok=True)
             
         self.log(f'[INFO] Trainer: {self.name} | {self.time_stamp} | {self.device} | {"fp16" if self.fp16 else "fp32"} | {self.workspace}')
         self.log(f'[INFO] #parameters: {sum([p.numel() for p in model.parameters() if p.requires_grad])}')
@@ -317,6 +319,16 @@ class Trainer(object):
                 
                 text_z = self.guidance.get_text_embeds([text], [negative_text])
                 self.text_z.append(text_z)
+    
+    def prepare_guidance_condition(self):
+        if self.opt.guidance == 'stable-diffusion':
+            self.condition_dict = self.guidance.prepare_guidance_condition(self.opt)
+        elif self.opt.guidance == 'reconstruction':
+            self.condition_dict = self.guidance.prepare_guidance_condition(self.opt)
+        elif self.opt.guidance == 'stable-diffusion-inpainting':
+            self.condition_dict = self.guidance.prepare_guidance_condition(self.opt)
+        else:
+            raise NotImplementedError('This type of guidance is not implement yet')
 
     def __del__(self):
         if self.log_ptr: 
@@ -338,6 +350,8 @@ class Trainer(object):
 
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
+        nears = data['nears'] if 'nears' in data else None
+        fars = data['fars'] if 'fars' in data else None
 
         B, N = rays_o.shape[:2]
         H, W = data['H'], data['W']
@@ -360,30 +374,24 @@ class Trainer(object):
 
         # _t = time.time()
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random
-        outputs = self.model.render(rays_o, rays_d, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
-        pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
+        outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
+        pred_rgb = outputs['image']
+        # pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
         # torch.cuda.synchronize(); print(f'[TIME] nerf render {time.time() - _t:.4f}s')
-        
-        # print(shading)
-        # torch_vis_2d(pred_rgb[0])
-        
-        # get text embeddings
-        if self.opt.dir_text:
-            dirs = data['dir'] # [B,]
-            text_z = self.text_z[dirs]
-        else:
-            text_z = self.text_z
         
         # encode pred_rgb to latents
         # _t = time.time()
-        if self.opt.use_diffusion_grad:
-            loss = self.guidance.train_step_with_diffusion_grad(text_z, pred_rgb)
-        else:
-            loss = self.guidance.train_step(text_z, pred_rgb)
+        condition_dict_batch = self.guidance.prepare_guidance_condition_batch(self.opt, data)
+        self.condition_dict.update(condition_dict_batch)
+        loss = self.guidance.train_step(self.opt, data, self.condition_dict, pred_rgb)
         # torch.cuda.synchronize(); print(f'[TIME] total guiding {time.time() - _t:.4f}s')
 
         # occupancy loss
-        pred_ws = outputs['weights_sum'].reshape(B, 1, H, W)
+        # TODO: think the reconstruction of different loss
+        if self.opt.guidance != 'reconstruction':
+            pred_ws = outputs['weights_sum'].reshape(B, 1, H, W)
+        else:
+            pred_ws = outputs['weights_sum']
 
         if self.opt.lambda_opacity > 0:
             loss_opacity = (pred_ws ** 2).mean()
@@ -410,6 +418,9 @@ class Trainer(object):
 
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
+        nears = data['nears'] if 'nears' in data else None
+        fars = data['fars'] if 'fars' in data else None
+    
 
         B, N = rays_o.shape[:2]
         H, W = data['H'], data['W']
@@ -418,7 +429,7 @@ class Trainer(object):
         ambient_ratio = data['ambient_ratio'] if 'ambient_ratio' in data else 1.0
         light_d = data['light_d'] if 'light_d' in data else None
 
-        outputs = self.model.render(rays_o, rays_d, staged=True, perturb=False, bg_color=None, light_d=light_d, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, nears, fars, staged=True, perturb=False, bg_color=None, light_d=light_d, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
         pred_rgb = outputs['image'].reshape(B, H, W, 3)
         pred_depth = outputs['depth'].reshape(B, H, W)
         pred_ws = outputs['weights_sum'].reshape(B, H, W)
@@ -438,6 +449,8 @@ class Trainer(object):
     def test_step(self, data, bg_color=None, perturb=False):  
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
+        nears = data['nears'] if 'nears' in data else None
+        fars = data['fars'] if 'fars' in data else None
 
         B, N = rays_o.shape[:2]
         H, W = data['H'], data['W']
@@ -451,7 +464,7 @@ class Trainer(object):
         ambient_ratio = data['ambient_ratio'] if 'ambient_ratio' in data else 1.0
         light_d = data['light_d'] if 'light_d' in data else None
 
-        outputs = self.model.render(rays_o, rays_d, staged=True, perturb=perturb, light_d=light_d, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, bg_color=bg_color, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, nears, fars, staged=True, perturb=perturb, light_d=light_d, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, bg_color=bg_color, **vars(self.opt))
 
         pred_rgb = outputs['image'].reshape(B, H, W, 3)
         pred_depth = outputs['depth'].reshape(B, H, W)
@@ -476,7 +489,7 @@ class Trainer(object):
 
     def train(self, train_loader, valid_loader, max_epochs):
 
-        assert self.text_z is not None, 'Training must provide a text prompt!'
+        assert self.condition_dict is not None, 'Training must provide condition'
 
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
@@ -726,9 +739,12 @@ class Trainer(object):
                 if self.use_tensorboardX:
                     self.writer.add_scalar("train/loss", loss_val, self.global_step)
                     self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
-
+                
+                mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
+                psnr = mse2psnr(loss.cpu()).item()
+                
                 if self.scheduler_update_every_step:
-                    pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")
+                    pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), psnr={psnr:.4f}, lr={self.optimizer.param_groups[0]['lr']:.6f}")
                 else:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")
                 pbar.update(loader.batch_size)
@@ -777,6 +793,8 @@ class Trainer(object):
         if self.local_rank == 0:
             pbar = tqdm.tqdm(total=len(loader) * loader.batch_size, bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
 
+        # import pdb 
+        # pdb.set_trace()
         with torch.no_grad():
             self.local_step = 0
 

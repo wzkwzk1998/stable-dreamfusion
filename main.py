@@ -3,6 +3,7 @@ import argparse
 import configargparse
 
 from dataset.dreamfusion_dataset import DreamfusionDataset
+from dataset.llff_dataset import LlffDataset
 from nerf.utils import *
 
 from nerf.gui import NeRFGUI
@@ -21,11 +22,8 @@ if __name__ == '__main__':
     parser.add_argument('--save_mesh', action='store_true', help="export an obj mesh with texture")
     parser.add_argument('--eval_interval', type=int, default=10, help="evaluate on the valid set every interval epochs")
     parser.add_argument('--workspace', type=str, default='workspace')
-    parser.add_argument('--guidance', type=str, default='stable-diffusion', help='choose from [stable-diffusion, clip, stable-diffusion-inpainting]')
+    parser.add_argument('--guidance', type=str, default='stable-diffusion', help='choose from [stable-diffusion, clip, stable-diffusion-inpainting, reconstruction]')
     parser.add_argument('--seed', type=int, default=0)
-
-    ### dataset options
-    parser.add_argument
 
     ### training options
     parser.add_argument('--iters', type=int, default=10000, help="training iters")
@@ -57,10 +55,19 @@ if __name__ == '__main__':
     # rendering resolution in training, decrease this if CUDA OOM.
     parser.add_argument('--w', type=int, default=64, help="render width for NeRF in training")
     parser.add_argument('--h', type=int, default=64, help="render height for NeRF in training")
+    parser.add_argument('--w_guidance', type=int, default=512, help='guidance width')
+    parser.add_argument('--h_guidance', type=int, default=512, help='guidance height')
     parser.add_argument('--jitter_pose', action='store_true', help="add jitters to the randomly sampled camera poses")
-    
+
     ### dataset options
-    parser.add_argument('--bound', type=float, default=1, help="assume the scene is bounded in box(-bound, bound)")
+    parser.add_argument('--datadir', type=str, default='', help='input data directory')
+    parser.add_argument('--dataset_type', type=str, default='dreamfusion', choices=['llff', 'dreamfusion'])
+    
+    ### llff dataset options
+    parser.add_argument('--N_rand', type=int, default=-1, help="set > 0 to enable ray sample when training, (not use in dreamfusion dataset)")
+    
+    ### dreamfusion  dataset options
+    parser.add_argument('--bound', type=float, default=1, help="assume the scene is bounded in box(bound_min, bound_max)")
     parser.add_argument('--dt_gamma', type=float, default=0, help="dt_gamma (>=0) for adaptive ray marching. set to 0 to disable, >0 to accelerate rendering (but usually with worse quality)")
     parser.add_argument('--min_near', type=float, default=0.1, help="minimum near distance for camera")
     parser.add_argument('--radius_range', type=float, nargs='*', default=[1.0, 1.5], help="training camera radius range")
@@ -70,6 +77,7 @@ if __name__ == '__main__':
     parser.add_argument('--angle_overhead', type=float, default=30, help="[0, angle_overhead] is the overhead region")
     parser.add_argument('--angle_front', type=float, default=60, help="[0, angle_front] is the front region, [180, 180+angle_front] the back region, otherwise the side region.")
 
+    ### loss options
     parser.add_argument('--lambda_entropy', type=float, default=1e-4, help="loss scale for alpha entropy")
     parser.add_argument('--lambda_opacity', type=float, default=0, help="loss scale for alpha value")
     parser.add_argument('--lambda_orient', type=float, default=1e-2, help="loss scale for orientation")
@@ -88,8 +96,10 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     if opt.O_machine:
-        opt.fp16 = True
-        opt.dir_text = True
+        # opt.fp16 = True
+        opt.fp16 = False
+        # TODO: dir_text for llffdataset
+        # opt.dir_text = True
         opt.cuda_ray = True
 
     elif opt.O2_machine:
@@ -129,15 +139,21 @@ if __name__ == '__main__':
             gui.render()
         
         else:
-            test_loader = DreamfusionDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=100).dataloader()
+            ### Load test dataset
+            if opt.dataset_type == 'dreamfusion':
+                test_loader = DreamfusionDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=100).dataloader()
+            elif opt.dataset_type == 'llff':
+                test_loader = LlffDataset(opt.datadir, device=device, split='test', H=opt.H, W=opt.W).dataloader()
             trainer.test(test_loader)
             
             if opt.save_mesh:
                 trainer.save_mesh(resolution=256)
     
     else:
-        
-        train_loader = DreamfusionDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=100).dataloader()
+        if opt.dataset_type == 'dreamfusion':
+            train_loader = DreamfusionDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=100).dataloader()
+        elif opt.dataset_type == 'llff':
+            train_loader = LlffDataset(opt.datadir, device=device, split='train', H=opt.h, W=opt.w, N_rand=opt.N_rand).dataloader()
 
         # Choose Optimizer
         if opt.optim == 'adan':
@@ -160,7 +176,7 @@ if __name__ == '__main__':
 
         # Choose diffusion model
         if opt.guidance == 'stable-diffusion':
-            from guidance.sd import StableDiffusion
+            from guidance.stable_diffusion import StableDiffusion
             guidance = StableDiffusion(device, opt.sd_version, opt.hf_key)
         elif opt.guidance == 'stable-diffusion-inpainting':
             from guidance.stable_diffusion_inpainting import StableDiffusionForInpainting
@@ -183,7 +199,10 @@ if __name__ == '__main__':
             gui.render()
         
         else:
-            valid_loader = DreamfusionDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader()
+            if opt.dataset_type == 'dreamfusion':
+                valid_loader = DreamfusionDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader()
+            elif opt.dataset_type == 'llff':
+                valid_loader = LlffDataset(opt.datadir, device=device, split='test').dataloader()
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, max_epoch)

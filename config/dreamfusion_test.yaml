@@ -1,12 +1,11 @@
+workspace: ./logs/dreamfusion_castle_4
 # experiment base setting
-workspace: ./logs/dreamfusion_roses
 O_machine: true
 
 # guidance setting
 guidance: stable-diffusion
-text: 'a DSLR photo of a rose'
+text: 'A highly detailed sandcastle'
 
 # NeRF setting
 # Training Setting
-iters: 15000
-# 
+iters: 20000

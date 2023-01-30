@@ -76,6 +76,10 @@ class NeRFNetwork(NeRFRenderer):
     def common_forward(self, x):
         # x: [N, 3], in [-bound, bound]
 
+        # if not torch.any(x <= self.bound) or not torch.any(x >= -self.bound):
+        #     # raise ValueError('coordinate must be within bound')
+        #     import pdb
+        #     pdb.set_trace()
         # sigma
         h = self.encoder(x, bound=self.bound)
 

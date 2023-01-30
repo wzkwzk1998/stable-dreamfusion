@@ -60,8 +60,9 @@ def near_far_from_bound(rays_o, rays_d, bound, type='cube', min_near=0.05):
         near = radius - bound # [B, N, 1]
         far = radius + bound
 
+    # bounding_box [-1, 1]^3 in pytorch(not cuda)
     elif type == 'cube':
-        tmin = (-bound - rays_o) / (rays_d + 1e-15) # [B, N, 3]
+        tmin = (-bound) / (rays_d + 1e-15) # [B, N, 3]
         tmax = (bound - rays_o) / (rays_d + 1e-15)
         near = torch.where(tmin < tmax, tmin, tmax).max(dim=-1, keepdim=True)[0]
         far = torch.where(tmin > tmax, tmin, tmax).min(dim=-1, keepdim=True)[0]
@@ -71,6 +72,8 @@ def near_far_from_bound(rays_o, rays_d, bound, type='cube', min_near=0.05):
         far[mask] = 1e9
         # restrict near to a minimal value
         near = torch.clamp(near, min=min_near)
+    else:
+        raise NotImplementedError('Unrecognized near far type')
 
     return near, far
 
@@ -94,6 +97,7 @@ class NeRFRenderer(nn.Module):
         self.opt = opt
         self.bound = opt.bound
         self.cascade = 1 + math.ceil(math.log2(opt.bound))
+        # self.cascade = 1
         self.grid_size = 128
         self.cuda_ray = opt.cuda_ray
         self.min_near = opt.min_near
@@ -327,7 +331,7 @@ class NeRFRenderer(nn.Module):
 
         _export(v, f)
 
-    def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, light_d=None, ambient_ratio=1.0, shading='albedo', bg_color=None, perturb=False, **kwargs):
+    def run(self, rays_o, rays_d, nears=None, fars=None, num_steps=128, upsample_steps=128, light_d=None, ambient_ratio=1.0, shading='albedo', bg_color=None, perturb=False, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # bg_color: [BN, 3] in range [0, 1]
         # return: image: [B, N, 3], depth: [B, N]
@@ -342,14 +346,14 @@ class NeRFRenderer(nn.Module):
         results = {}
 
         # choose aabb
-        aabb = self.aabb_train if self.training else self.aabb_infer
+        # if nears == None or fars == None:
+        #     nears, fars = near_far_from_bound(rays_o, rays_d, self.bound, type='cube', min_near=self.min_near)
+        if nears == None or fars == None:
+            nears, fars = raymarching.near_far_from_aabb(rays_o, rays_d, self.aabb_train if self.training else self.aabb_infer)
 
-        # sample steps
-        # nears, fars = raymarching.near_far_from_aabb(rays_o, rays_d, aabb, self.min_near)
-        # nears.unsqueeze_(-1)
-        # fars.unsqueeze_(-1)
-        nears, fars = near_far_from_bound(rays_o, rays_d, self.bound, type='sphere', min_near=self.min_near)
-
+        nears = nears.reshape((-1, 1))
+        fars = fars.reshape((-1, 1))
+        
         # random sample light_d if not provided
         if light_d is None:
             # gaussian noise around the ray origin, so the light always face the view dir (avoid dark face)
@@ -364,13 +368,14 @@ class NeRFRenderer(nn.Module):
 
         # perturb z_vals
         sample_dist = (fars - nears) / num_steps
+
         if perturb:
             z_vals = z_vals + (torch.rand(z_vals.shape, device=device) - 0.5) * sample_dist
-            #z_vals = z_vals.clamp(nears, fars) # avoid out of bounds xyzs.
+            # z_vals = z_vals.clamp(nears, fars) # avoid out of bounds xyzs.
 
         # generate xyzs
         xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1) # [N, 1, 3] * [N, T, 1] -> [N, T, 3]
-        xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
+        # xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
 
         #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
@@ -397,7 +402,7 @@ class NeRFRenderer(nn.Module):
                 new_z_vals = sample_pdf(z_vals_mid, weights[:, 1:-1], upsample_steps, det=not self.training).detach() # [N, t]
 
                 new_xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * new_z_vals.unsqueeze(-1) # [N, 1, 3] * [N, t, 1] -> [N, t, 3]
-                new_xyzs = torch.min(torch.max(new_xyzs, aabb[:3]), aabb[3:]) # a manual clip.
+                # new_xyzs = torch.min(torch.max(new_xyzs, aabb[:3]), aabb[3:]) # a manual clip.
 
             # only forward new points to save computation
             new_density_outputs = self.density(new_xyzs.reshape(-1, 3))
@@ -417,9 +422,10 @@ class NeRFRenderer(nn.Module):
                 density_outputs[k] = torch.gather(tmp_output, dim=1, index=z_index.unsqueeze(-1).expand_as(tmp_output))
 
         deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T+t-1]
-        deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
+        deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1) #[N, T+t-1]
         alphas = 1 - torch.exp(-deltas * density_outputs['sigma'].squeeze(-1)) # [N, T+t]
         alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+t+1]
+        # weight is equals to T_i * \alpha_i 
         weights = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T+t]
 
         dirs = rays_d.view(-1, 1, 3).expand_as(xyzs)
@@ -457,6 +463,9 @@ class NeRFRenderer(nn.Module):
             bg_color = self.background(rays_d.reshape(-1, 3)) # [N, 3]
         elif bg_color is None:
             bg_color = 1
+        
+        # TODO: test the background is harmful to vanilla nerf
+        bg_color = 0
             
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
 
@@ -473,7 +482,7 @@ class NeRFRenderer(nn.Module):
         return results
 
 
-    def run_cuda(self, rays_o, rays_d, dt_gamma=0, light_d=None, ambient_ratio=1.0, shading='albedo', bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
+    def run_cuda(self, rays_o, rays_d, nears=None, fars=None, dt_gamma=0, light_d=None, ambient_ratio=1.0, shading='albedo', bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: image: [B, N, 3], depth: [B, N]
 
@@ -481,11 +490,16 @@ class NeRFRenderer(nn.Module):
         rays_o = rays_o.contiguous().view(-1, 3)
         rays_d = rays_d.contiguous().view(-1, 3)
 
+
         N = rays_o.shape[0] # N = B * N, in fact
         device = rays_o.device
 
-        # pre-calculate near far
-        nears, fars = raymarching.near_far_from_aabb(rays_o, rays_d, self.aabb_train if self.training else self.aabb_infer)
+        # pre-calculate near far if near and far is not given, otherwise use given near and far
+        if nears == None or fars == None:
+            nears, fars = raymarching.near_far_from_aabb(rays_o, rays_d, self.aabb_train if self.training else self.aabb_infer)
+
+        nears = nears.reshape((-1, 1)).squeeze(-1)
+        fars = fars.reshape((-1, 1)).squeeze(-1)
 
         # random sample light_d if not provided
         if light_d is None:
@@ -645,7 +659,7 @@ class NeRFRenderer(nn.Module):
         # print(f'[density grid] min={self.density_grid.min().item():.4f}, max={self.density_grid.max().item():.4f}, mean={self.mean_density:.4f}, occ_rate={(self.density_grid > density_thresh).sum() / (128**3 * self.cascade):.3f} | [step counter] mean={self.mean_count}')
 
 
-    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, **kwargs):
+    def render(self, rays_o, rays_d, nears=None, fars=None, staged=False, max_ray_batch=4096, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: pred_rgb: [B, N, 3]
 
@@ -667,7 +681,8 @@ class NeRFRenderer(nn.Module):
                 head = 0
                 while head < N:
                     tail = min(head + max_ray_batch, N)
-                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], **kwargs)
+                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], nears[b:b+1, head:tail] if nears is not None else None, \
+                        fars[b:b+1, head:tail] if fars is not None else None, **kwargs)
                     depth[b:b+1, head:tail] = results_['depth']
                     weights_sum[b:b+1, head:tail] = results_['weights_sum']
                     image[b:b+1, head:tail] = results_['image']
@@ -679,6 +694,6 @@ class NeRFRenderer(nn.Module):
             results['weights_sum'] = weights_sum
 
         else:
-            results = _run(rays_o, rays_d, **kwargs)
+            results = _run(rays_o, rays_d, nears, fars, **kwargs)
 
         return results

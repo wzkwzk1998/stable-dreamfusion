@@ -1,0 +1,11 @@
+workspace: ./logs/dreamfusion_fern
+# experiment base setting
+O_machine: true
+
+# guidance setting
+guidance: stable-diffusion
+text: 'a highly detailed fern'
+
+# NeRF setting
+# Training Setting
+iters: 20000

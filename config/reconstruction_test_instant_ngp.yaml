@@ -1,0 +1,25 @@
+# experiment base setting
+workspace: ./logs/reconstruction_instant_ngp_without_cudaray_2
+O_machine: true
+
+# data setting
+datadir: /data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data/flower 
+dataset_type: llff
+bound: 2
+
+# guidance setting
+guidance: reconstruction
+# NeRF setting
+optim: adam
+
+# Training Setting
+iters: 15000
+eval_interval: 100
+lr: 1e-2
+min_lr: 1e-3
+warm_iters: 100
+albedo_iters: 200001 
+lambda_entropy: 0
+lambda_opacity: 0
+lambda_orient: 0
+lambda_smooth: 0

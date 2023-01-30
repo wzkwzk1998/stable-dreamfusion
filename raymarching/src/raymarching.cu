@@ -342,6 +342,9 @@ __global__ void kernel_march_rays_train(
     const float far = fars[n];
     const float noise = noises[n];
 
+    // TODO: change the bound need to change dt_min and dt_max
+    // const float dt_min = 2 * SQRT3() / max_steps;
+    // const float dt_max = 2 * SQRT3() * (1 << (C - 1)) / H;
     const float dt_min = 2 * SQRT3() / max_steps;
     const float dt_max = 2 * SQRT3() * (1 << (C - 1)) / H;
     
@@ -374,6 +377,7 @@ __global__ void kernel_march_rays_train(
         const int nx = clamp(0.5 * (x * mip_rbound + 1) * H, 0.0f, (float)(H - 1));
         const int ny = clamp(0.5 * (y * mip_rbound + 1) * H, 0.0f, (float)(H - 1));
         const int nz = clamp(0.5 * (z * mip_rbound + 1) * H, 0.0f, (float)(H - 1));
+
 
         const uint32_t index = level * H3 + __morton3D(nx, ny, nz);
         const bool occ = grid[index / 8] & (1 << (index % 8));
