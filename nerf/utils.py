@@ -362,10 +362,10 @@ class Trainer(object):
             ambient_ratio = 1.0
         else: 
             rand = random.random()
-            if rand > 0.8: 
+            if rand > 0.75: 
                 shading = 'albedo'
                 ambient_ratio = 1.0
-            elif rand > 0.4: 
+            elif rand > 0.325: 
                 shading = 'textureless'
                 ambient_ratio = 0.1
             else: 
@@ -393,8 +393,12 @@ class Trainer(object):
         else:
             pred_ws = outputs['weights_sum']
 
+        # if self.opt.lambda_opacity > 0:
+        #     loss_opacity = (pred_ws ** 2).mean()
+        #     loss = loss + self.opt.lambda_opacity * loss_opacity
+        # TODO: use opacity loss in dreamfusion paper. https://arxiv.org/abs/2209.14988
         if self.opt.lambda_opacity > 0:
-            loss_opacity = (pred_ws ** 2).mean()
+            loss_opacity = ((pred_ws + 0.01) ** 0.5).mean()
             loss = loss + self.opt.lambda_opacity * loss_opacity
 
         if self.opt.lambda_entropy > 0:
@@ -404,6 +408,7 @@ class Trainer(object):
                     
             loss = loss + self.opt.lambda_entropy * loss_entropy
 
+        # TODO: not implement yet
         if self.opt.lambda_orient > 0 and 'loss_orient' in outputs:
             loss_orient = outputs['loss_orient']
             loss = loss + self.opt.lambda_orient * loss_orient

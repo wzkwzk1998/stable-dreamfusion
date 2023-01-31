@@ -1,13 +1,12 @@
-workspace: ./logs/dreamfusion_sand_castle_with_albedo
+workspace: ./logs/dreamfusion_rendered_pig
 # experiment base setting
 O_machine: true
 cuda_ray: true
 dir_text: true
-save_mesh: true
 
 # guidance setting
 guidance: stable-diffusion
-text: 'A high quality sand castle'
+text: 'A high quality rendered pig'
 
 # NeRF setting
 # Training Setting

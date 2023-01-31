@@ -88,7 +88,7 @@ class StableDiffusion(nn.Module):
                     elif d == 'overhead': negative_text += "face"
                     elif d == 'bottom': negative_text += "face"
                 
-                text_z_single = self.guidance.get_text_embeds([text], [negative_text])
+                text_z_single = self.get_text_embeds([text], [negative_text])
                 text_z.append(text_z_single)
         
         return text_z

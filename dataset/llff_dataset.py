@@ -249,6 +249,7 @@ def spherify_poses(poses, bds):
     return poses_reset, new_poses, bds
     
 
+
 def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False):
     
 

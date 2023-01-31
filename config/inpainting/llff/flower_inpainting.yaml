@@ -7,7 +7,7 @@ cuda_ray: False
 datadir: /data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data_504x360_centre_cropping/flower 
 dataset_type: llff
 dir_text: False
-bound: 2
+bound: 1.5
 
 #resolution in training, test and guidance
 h: 90

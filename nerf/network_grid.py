@@ -127,13 +127,13 @@ class NeRFNetwork(NeRFRenderer):
         if shading == 'albedo':
             # no need to query normal
             sigma, color = self.common_forward(x)
-            normal = None
+            # TODO: test, we use normal in albedo
+            normal = self.normal(x)
         
         else:
             # query normal
-
             sigma, albedo = self.common_forward(x)
-            normal = self.normal(x)
+            normal = self.normal(x)  # normalize to -1 ~ 1
 
             # lambertian shading
             lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
