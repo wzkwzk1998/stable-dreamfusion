@@ -100,7 +100,8 @@ if __name__ == '__main__':
         opt.fp16 = False
         # TODO: dir_text for llffdataset
         # opt.dir_text = True
-        opt.cuda_ray = True
+        # opt.cuda_ray = True
+        
 
     elif opt.O2_machine:
         # only use fp16 if not evaluating normals (else lead to NaNs in training...)

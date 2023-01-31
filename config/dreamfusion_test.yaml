@@ -1,10 +1,10 @@
-workspace: ./logs/dreamfusion_castle_4
+workspace: ./logs/dreamfusion_robotichand
 # experiment base setting
 O_machine: true
 
 # guidance setting
 guidance: stable-diffusion
-text: 'A highly detailed sandcastle'
+text: 'A robot hand, realistic'
 
 # NeRF setting
 # Training Setting

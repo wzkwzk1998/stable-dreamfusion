@@ -1,11 +1,13 @@
 # experiment base setting
-workspace: ./logs/flower_inpainting_test
+workspace: ./logs/flower_inpainting_without_cudaray
 O_machine: true
+cuda_ray: False
 
 # data setting
-datadir: /data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data_504x360_centre_mask/flower 
+datadir: /data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data_504x360_centre_cropping/flower 
 dataset_type: llff
 dir_text: False
+bound: 2
 
 #resolution in training, test and guidance
 h: 90
@@ -20,5 +22,15 @@ guidance: stable-diffusion-inpainting
 text: 'a high quality photo of a red flower'
 
 # NeRF setting
+optim: adam
 # Training Setting
 iters: 15000
+eval_interval: 100
+lr: 1e-2
+min_lr: 1e-3
+warm_iters: 100
+albedo_iters: 200001 
+lambda_entropy: 0
+lambda_opacity: 0
+lambda_orient: 0
+lambda_smooth: 0

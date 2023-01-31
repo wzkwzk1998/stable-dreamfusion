@@ -10,8 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import PIL
 from tqdm import tqdm
-from utils.mask_utils import inpainting_loss
-from utils.logger import draw_grad
 import time
 
 def seed_everything(seed):
@@ -73,10 +71,13 @@ class StableDiffusionForInpainting(nn.Module):
     def prepare_guidance_condition_batch(self, opt, data):
         condition_image = data['rgb_gt']
         assert condition_image.shape[1] == opt.h_guidance and condition_image.shape[2] == opt.w_guidance
+        # TODO: mask will be provide in data in the future
         mask = torch.zeros((opt.h_guidance, opt.w_guidance))
+        mask[opt.h_guidance // 2 - opt.h_guidance // 4 : opt.h_guidance // 2 + opt.h_guidance // 4,
+            opt.w_guidance // 2 - opt.w_guidance // 4 : opt.w_guidance // 2 + opt.w_guidance // 4] = 1
         condition_dict_batch = {
-            'condition_image': condition_image,
-            'mask': mask
+            'condition_image': condition_image.to(self.device),
+            'mask': mask.to(self.device),
         }
 
         return condition_dict_batch
@@ -302,11 +303,7 @@ class StableDiffusionForInpainting(nn.Module):
                     data,
                     condition_dict,
                     pred_rgb:torch.Tensor, 
-                    image:torch.Tensor, 
-                    mask:torch.Tensor, 
-                    height=512, \
-                    width=512, 
-                    guidance_scale:float=7.5,
+                    guidance_scale:float=100,
                     lambda_il:float=1.0,
                     target:torch.Tensor=None,
                     lambda_diffusion:float=1e-5):
@@ -320,7 +317,7 @@ class StableDiffusionForInpainting(nn.Module):
         
         # assert isinstance(text_embeddings, torch.Tensor)
         # assert pred_rgb.shape[-2] == height and pred_rgb.shape[-1] == width
-        text_embeddings = data['text_z']
+        text_embeddings = condition_dict['text_z']
         if opt.dir_text:
             dirs = data['dir'] # [B,]
             text_embeddings = text_embeddings[dirs]
@@ -328,8 +325,23 @@ class StableDiffusionForInpainting(nn.Module):
             text_embeddings = text_embeddings
         h_image = data['H']
         w_image = data['W']
+        height = opt.h_guidance
+        width = opt.w_guidance
         pred_rgb = pred_rgb.reshape((1, h_image, w_image, 3)).permute(0, 3, 1, 2).contiguous()
-        pred_rgb = F.interpolate(pred_rgb, (opt.h_guidance, opt.w_guidance), mode='bilinear', align_corners=False)
+        pred_rgb = F.interpolate(pred_rgb, (height, width), mode='bilinear', align_corners=False)
+        
+        # import pdb
+        # pdb.set_trace()
+        
+        image = condition_dict['condition_image']
+        image = image * 2 - 1.0
+        image = image.permute(0, 3, 1, 2).contiguous()
+        mask = condition_dict['mask']
+        # import PIL.Image as Image
+        # image_log = image.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
+        # print(image_log.shape)
+        # Image.fromarray(((image_log + 1) * 127.5).astype('uint8')).save('image_masked.png')
+        # Image.fromarray((mask.cpu().numpy() * 255.0).astype('uint8')).save('mask.png')
 
         # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
         t = torch.randint(self.min_step, self.max_step + 1, [1], dtype=torch.long, device=self.device)
@@ -398,13 +410,13 @@ class StableDiffusionForInpainting(nn.Module):
         # w = (self.alphas[t]) ** 0.5
         # w = self.alphas[t] ** 0.5 * (1 - self.alphas[t])
         grad = w * (noise_pred - noise)
-        grad = torch.nan_to_num(grad)
+        # grad = torch.nan_to_num(grad)
 
         # clip grad for stable training?
         # grad = grad.clamp(-1, 1)
 
         # manually backward, since we omitted an item in grad and cannot simply autodiff.
-        latents.backward(gradient=grad, retain_grad=True)
+        latents.backward(gradient=grad, retain_graph=True)
         # grad_rgb = pred_rgb_copy.grad
         # grad_rgb = grad_rgb * mask_fr
         # # inpainting loss 
