@@ -81,14 +81,8 @@ if __name__ == '__main__':
     parser.add_argument('--angle_overhead', type=float, default=30, help="[0, angle_overhead] is the overhead region")
     parser.add_argument('--angle_front', type=float, default=60, help="[0, angle_front] is the front region, [180, 180+angle_front] the back region, otherwise the side region.")
 
-<<<<<<< HEAD
-    ### loss options
-    parser.add_argument('--lambda_entropy', type=float, default=0, help="loss scale for alpha entropy")
-    parser.add_argument('--lambda_opacity', type=float, default=2.5*1e-3, help="loss scale for alpha value")
-=======
     parser.add_argument('--lambda_entropy', type=float, default=1e-3, help="loss scale for alpha entropy")
     parser.add_argument('--lambda_opacity', type=float, default=0, help="loss scale for alpha value")
->>>>>>> da27ee6dba4f9159d8baccf98ef1e21e671ff1ab
     parser.add_argument('--lambda_orient', type=float, default=1e-2, help="loss scale for orientation")
     parser.add_argument('--lambda_tv', type=float, default=1e-7, help="loss scale for total variation")
 

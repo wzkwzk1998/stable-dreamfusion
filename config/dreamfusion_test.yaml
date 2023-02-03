@@ -1,4 +1,4 @@
-workspace: ./logs/dreamfusion_sand_castle_with_albedo
+workspace: ./logs/dreamfusion_superman
 # experiment base setting
 O_machine: true
 cuda_ray: true

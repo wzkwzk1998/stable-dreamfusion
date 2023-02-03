@@ -100,17 +100,6 @@ class NeRFNetwork(NeRFRenderer):
         sigma, albedo, enc = self.common_forward(x)
 
         if shading == 'albedo':
-<<<<<<< HEAD
-            # no need to query normal
-            sigma, color = self.common_forward(x)
-            # TODO: test, we use normal in albedo
-            normal = self.normal(x)
-        
-        else:
-            # query normal
-            sigma, albedo = self.common_forward(x)
-            normal = self.normal(x)  # normalize to -1 ~ 1
-=======
             normal = None
             color = albedo
         
@@ -119,7 +108,6 @@ class NeRFNetwork(NeRFRenderer):
             normal = self.normal_net(enc)
             normal = safe_normalize(normal)
             normal = torch.nan_to_num(normal)
->>>>>>> da27ee6dba4f9159d8baccf98ef1e21e671ff1ab
 
             lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
 
