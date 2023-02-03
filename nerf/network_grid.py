@@ -67,10 +67,9 @@ class NeRFNetwork(NeRFRenderer):
     # add a density blob to the scene center
     def gaussian(self, x):
         # x: [B, N, 3]
-        
+        # NOTE: Dreamfusion just use blob_iters in the first few epoch, but we use it all the time for better performance
         d = (x ** 2).sum(-1)
         g = self.opt.blob_density * torch.exp(- d / (self.opt.blob_radius ** 2))
-
         return g
 
     def common_forward(self, x):
@@ -85,6 +84,7 @@ class NeRFNetwork(NeRFRenderer):
 
         h = self.sigma_net(h)
 
+        # TODO: only add self.gaussian in the first few step
         sigma = trunc_exp(h[..., 0] + self.gaussian(x))
         albedo = torch.sigmoid(h[..., 1:])
 
@@ -136,7 +136,16 @@ class NeRFNetwork(NeRFRenderer):
             normal = self.normal(x)  # normalize to -1 ~ 1
 
             # lambertian shading
-            lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
+            # BUG: there is a little different in lambertian equation with dreamfusion
+            # lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
+            # import pdb
+            # pdb.set_trace()
+
+            N = x.shape[0]
+            l = l.repeat((N, 1))
+            light_point_vec = (l - x)
+            light_point_vec_len = (torch.sum((light_point_vec ** 2), dim=-1) ** 0.5)
+            lambertian = ratio + (1 - ratio) * ((normal * light_point_vec).sum(dim=-1) / light_point_vec_len).clamp(min=0) # [N,]
 
             if shading == 'textureless':
                 color = lambertian.unsqueeze(-1).repeat(1, 3)

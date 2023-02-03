@@ -6,6 +6,8 @@ import imageio
 import random
 import warnings
 import tensorboardX
+import json
+import copy
 
 import numpy as np
 import pandas as pd
@@ -206,12 +208,18 @@ class Trainer(object):
             self.ckpt_path = os.path.join(self.workspace, 'checkpoints')
             self.best_path = f"{self.ckpt_path}/{self.name}.pth"
             os.makedirs(self.ckpt_path, exist_ok=True)
-    
+            # write config
+            opt_json = json.dumps(vars(opt), indent=4)
+            with open(os.path.join(self.workspace, 'config.json'), 'w') as jfp:
+                jfp.write(opt_json)
+
+     
         model.to(self.device)
         if self.world_size > 1:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
         self.model = model
+        self.model.reset_epoch_count()
 
         # guide model
         self.guidance = guidance
@@ -393,13 +401,13 @@ class Trainer(object):
         else:
             pred_ws = outputs['weights_sum']
 
-        # if self.opt.lambda_opacity > 0:
-        #     loss_opacity = (pred_ws ** 2).mean()
-        #     loss = loss + self.opt.lambda_opacity * loss_opacity
-        # TODO: use opacity loss in dreamfusion paper. https://arxiv.org/abs/2209.14988
         if self.opt.lambda_opacity > 0:
-            loss_opacity = ((pred_ws + 0.01) ** 0.5).mean()
+            loss_opacity = (pred_ws ** 2).mean()
             loss = loss + self.opt.lambda_opacity * loss_opacity
+        # TODO: use opacity loss in dreamfusion paper. https://arxiv.org/abs/2209.14988
+        # if self.opt.lambda_opacity > 0:
+        #     loss_opacity = ((pred_ws + 0.01) ** 0.5).mean()
+        #     loss = loss + self.opt.lambda_opacity * loss_opacity
 
         if self.opt.lambda_entropy > 0:
             alphas = (pred_ws).clamp(1e-5, 1 - 1e-5)
@@ -408,7 +416,6 @@ class Trainer(object):
                     
             loss = loss + self.opt.lambda_entropy * loss_entropy
 
-        # TODO: not implement yet
         if self.opt.lambda_orient > 0 and 'loss_orient' in outputs:
             loss_orient = outputs['loss_orient']
             loss = loss + self.opt.lambda_orient * loss_orient
@@ -468,6 +475,11 @@ class Trainer(object):
         shading = data['shading'] if 'shading' in data else 'albedo'
         ambient_ratio = data['ambient_ratio'] if 'ambient_ratio' in data else 1.0
         light_d = data['light_d'] if 'light_d' in data else None
+
+        shading = self.opt.test_shading
+        if shading == 'shading' or shading == 'textureless':
+            ambient_ratio = 0.1
+            light_d = rays_o[0, 0]
 
         outputs = self.model.render(rays_o, rays_d, nears, fars, staged=True, perturb=perturb, light_d=light_d, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, bg_color=bg_color, **vars(self.opt))
 
@@ -753,6 +765,9 @@ class Trainer(object):
                 else:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")
                 pbar.update(loader.batch_size)
+            
+            self.model.update_epoch_count()
+            
 
         if self.ema is not None:
             self.ema.update()

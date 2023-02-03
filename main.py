@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
     parser = configargparse.ArgumentParser(config_file_parser_class=configargparse.YAMLConfigFileParser)
     parser.add_argument('--config', is_config_file=True,  help='config file path')
+    parser.add_argument('--comment', type=str, required=True, help='comment of this experiment')
     parser.add_argument('--text', default=None, help="text prompt")
     parser.add_argument('--negative', default='', type=str, help="negative text prompt")
     parser.add_argument('-O', '--O_machine', action='store_true', help="equals --fp16 --cuda_ray --dir_text")
@@ -40,7 +41,8 @@ if __name__ == '__main__':
     parser.add_argument('--albedo', action='store_true', help="only use albedo shading to train, overrides --albedo_iters")
     parser.add_argument('--albedo_iters', type=int, default=1000, help="training iters that only use albedo shading")
     parser.add_argument('--uniform_sphere_rate', type=float, default=0.5, help="likelihood of sampling camera location uniformly on the sphere surface area")
-    parser.add_argument('--use_diffusion_grad', action='store_true', help='set true to use diffusion gradient to calculate image gradient when training')
+    # test options
+    parser.add_argument('--test_shading', type=str, choices=['shading', 'textureless', 'albedo'], help='rendered shading or textureless video (only used when test)')
     # model options
     parser.add_argument('--bg_radius', type=float, default=1.4, help="if positive, use a background model at sphere(bg_radius)")
     parser.add_argument('--density_thresh', type=float, default=10, help="threshold for density grid to be occupied")
@@ -75,11 +77,11 @@ if __name__ == '__main__':
     parser.add_argument('--dir_text', action='store_true', help="direction-encode the text prompt, by appending front/side/back/overhead view")
     parser.add_argument('--suppress_face', action='store_true', help="also use negative dir text prompt.")
     parser.add_argument('--angle_overhead', type=float, default=30, help="[0, angle_overhead] is the overhead region")
-    parser.add_argument('--angle_front', type=float, default=60, help="[0, angle_front] is the front region, [180, 180+angle_front] the back region, otherwise the side region.")
+    parser.add_argument('--angle_front', type=float, default=90, help="[0, angle_front] is the front region, [180, 180+angle_front] the back region, otherwise the side region.")
 
     ### loss options
-    parser.add_argument('--lambda_entropy', type=float, default=0, help="loss scale for alpha entropy")
-    parser.add_argument('--lambda_opacity', type=float, default=2.5*1e-3, help="loss scale for alpha value")
+    parser.add_argument('--lambda_entropy', type=float, default=1e-4, help="loss scale for alpha entropy")
+    parser.add_argument('--lambda_opacity', type=float, default=0, help="loss scale for alpha value")
     parser.add_argument('--lambda_orient', type=float, default=1e-2, help="loss scale for orientation")
     parser.add_argument('--lambda_smooth', type=float, default=0, help="loss scale for surface smoothness")
 
@@ -119,6 +121,7 @@ if __name__ == '__main__':
         from nerf.network_grid import NeRFNetwork
     else:
         raise NotImplementedError(f'--backbone {opt.backbone} is not implemented!')
+
     print(opt)
 
     seed_everything(opt.seed)
