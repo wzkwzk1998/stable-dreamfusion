@@ -185,11 +185,12 @@ class NeRFNetwork(NeRFRenderer):
         else:
             self.bg_net = None
 
-    def gaussian(self, x):
+    def density_blob(self, x):
         # x: [B, N, 3]
         
         d = (x ** 2).sum(-1)
-        g = self.opt.blob_density * torch.exp(- d / (self.opt.blob_radius ** 2))
+        # g = self.opt.blob_density * torch.exp(- d / (self.opt.blob_radius ** 2))
+        g = self.opt.blob_density * (1 - torch.sqrt(d) / self.opt.blob_radius)
 
         return g
 
@@ -197,12 +198,23 @@ class NeRFNetwork(NeRFRenderer):
         # x: [N, 3], in [-bound, bound]
 
         # sigma
+<<<<<<< HEAD
         h = self.encoder(x, bound=self.bound)
         sigma, h = self.sigma_net(h)
         # sigma = trunc_exp(sigma + self.gaussian(x))
         # fake albedo
 
         return sigma
+=======
+        enc = self.encoder(x, bound=self.bound)
+
+        h = self.sigma_net(enc)
+
+        sigma = F.softplus(h[..., 0] + self.density_blob(x))
+        albedo = torch.sigmoid(h[..., 1:])
+
+        return sigma, albedo
+>>>>>>> da27ee6dba4f9159d8baccf98ef1e21e671ff1ab
     
     # ref: https://github.com/zhaofuq/Instant-NSR/blob/main/nerf/network_sdf.py#L192
     def finite_difference_normal(self, x, epsilon=1e-2):

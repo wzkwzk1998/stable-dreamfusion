@@ -4,14 +4,14 @@ A pytorch implementation of the text-to-3D model **Dreamfusion**, powered by the
 
 The original paper's project page: [_DreamFusion: Text-to-3D using 2D Diffusion_](https://dreamfusion3d.github.io/).
 
-**NEW**: Stable-diffusion 2.0 base is supported!
+**NEWS (2023.1.30)**: Generation quality is better with many improvements proposed by [Magic3D](https://deepimagination.cc/Magic3D/)!
+
+https://user-images.githubusercontent.com/25863658/215996308-9fd959f5-b5c7-4a8e-a241-0fe63ec86a4a.mp4
 
 Colab notebooks: 
 * Instant-NGP backbone (`-O`): [![Instant-NGP Backbone](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1MXT3yfOFvO0ooKEfiUUvTKwUkrrlCHpF?usp=sharing)
 
 * Vanilla NeRF backbone (`-O2`): [![Vanilla Backbone](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1mvfxG-S_n_gZafWoattku7rLJ2kPoImL?usp=sharing) 
-
-Examples generated from text prompt `a high quality photo of a pineapple` viewed with the GUI in real time:
 
 https://user-images.githubusercontent.com/25863658/194241493-f3e68f78-aefe-479e-a4a8-001424a61b37.mp4
 
@@ -22,12 +22,10 @@ This project is a **work-in-progress**, and contains lots of differences from th
 
 ## Notable differences from the paper
 * Since the Imagen model is not publicly available, we use [Stable Diffusion](https://github.com/CompVis/stable-diffusion) to replace it (implementation from [diffusers](https://github.com/huggingface/diffusers)). Different from Imagen, Stable-Diffusion is a latent diffusion model, which diffuses in a latent space instead of the original image space. Therefore, we need the loss to propagate back from the VAE's encoder part too, which introduces extra time cost in training. Currently, 10000 training steps take about 3 hours to train on a V100.
-* We use the [multi-resolution grid encoder](https://github.com/NVlabs/instant-ngp/) to implement the NeRF backbone (implementation from [torch-ngp](https://github.com/ashawkey/torch-ngp)), which enables much faster rendering (~10FPS at 800x800). The vanilla NeRF backbone is also supported now, but the Mip-NeRF backbone as the paper is still not implemented.
+* We use the [multi-resolution grid encoder](https://github.com/NVlabs/instant-ngp/) to implement the NeRF backbone (implementation from [torch-ngp](https://github.com/ashawkey/torch-ngp)), which enables much faster rendering (~10FPS at 800x800). The surface normals are predicted with an MLP as [Magic3D](https://deepimagination.cc/Magic3D/).
+* The vanilla NeRF backbone is also supported now, but the Mip-NeRF backbone as the paper is still not implemented.
 * We use the [Adan](https://github.com/sail-sg/Adan) optimizer as default.
-
-
-## The multi-face [Janus problem](https://twitter.com/poolio/status/1578045212236034048).
-* This is likely to be caused by the text-to-2D model's capability, as discussed by [Magic3D](https://deepimagination.cc/Magic3D/) in Figure 4 and *Can single-stage optimization work with LDM prior?*.
+* The multi-face [Janus problem](https://twitter.com/poolio/status/1578045212236034048) is likely to be caused by the text-to-2D model's capability, as discussed by [Magic3D](https://deepimagination.cc/Magic3D/) in Figure 4 and *Can single-stage optimization work with LDM prior?*.
 
 
 # Install
@@ -140,26 +138,46 @@ Any contribution would be greatly appreciated!
 
 * The SDS loss is located at `./nerf/sd.py > StableDiffusion > train_step`:
 ```python
-# 1. we need to interpolate the NeRF rendering to 512x512, to feed it to SD's VAE.
+## 1. we need to interpolate the NeRF rendering to 512x512, to feed it to SD's VAE.
 pred_rgb_512 = F.interpolate(pred_rgb, (512, 512), mode='bilinear', align_corners=False)
-# 2. image (512x512) --- VAE --> latents (64x64), this is SD's difference from Imagen.
+## 2. image (512x512) --- VAE --> latents (64x64), this is SD's difference from Imagen.
 latents = self.encode_imgs(pred_rgb_512)
 ... # timestep sampling, noise adding and UNet noise predicting
-# 3. the SDS loss, since UNet part is ignored and cannot simply audodiff, we manually set the grad for latents.
+## 3. the SDS loss
 w = (1 - self.alphas[t])
 grad = w * (noise_pred - noise)
+# since UNet part is ignored and cannot simply audodiff, we have two ways to set the grad:
+# 3.1. call backward and set the grad now (need to retain graph since we will call a second backward for the other losses later)
 latents.backward(gradient=grad, retain_graph=True)
+return 0 # dummy loss
+# 3.2. use a custom function to set a hook in backward, so we only call backward once (credits to @elliottzheng)
+class SpecifyGradient(torch.autograd.Function):
+    @staticmethod
+    @custom_fwd
+    def forward(ctx, input_tensor, gt_grad):
+        ctx.save_for_backward(gt_grad) 
+        return torch.zeros([1], device=input_tensor.device, dtype=input_tensor.dtype) # dummy loss
+
+    @staticmethod
+    @custom_bwd
+    def backward(ctx, grad):
+        gt_grad, = ctx.saved_tensors
+        batch_size = len(gt_grad)
+        return gt_grad / batch_size, None
+
+loss = SpecifyGradient.apply(latents, grad)
+return loss # functional loss      
 ```
 * Other regularizations are in `./nerf/utils.py > Trainer > train_step`. 
     * The generation seems quite sensitive to regularizations on weights_sum (alphas for each ray). The original opacity loss tends to make NeRF disappear (zero density everywhere), so we use an entropy loss to replace it for now (encourages alpha to be either 0 or 1).
 * NeRF Rendering core function: `./nerf/renderer.py > NeRFRenderer > run & run_cuda`.
-* Shading & normal evaluation: `./nerf/network*.py > NeRFNetwork > forward`. Current implementation harms training and is disabled.
+* Shading & normal evaluation: `./nerf/network*.py > NeRFNetwork > forward`.
     * light direction: current implementation use a plane light source, instead of a point light source.
 * View-dependent prompting: `./nerf/provider.py > get_view_direction`.
     * use `--angle_overhead, --angle_front` to set the border.
     * use `--suppress_face` to add `face` as a negative prompt at all directions except `front`.
 * Network backbone (`./nerf/network*.py`) can be chosen by the `--backbone` option.
-* Spatial density bias (gaussian density blob): `./nerf/network*.py > NeRFNetwork > gaussian`.
+* Spatial density bias (density blob): `./nerf/network*.py > NeRFNetwork > density_blob`.
 
 # Acknowledgement
 

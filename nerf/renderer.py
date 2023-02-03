@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 import mcubes
 import raymarching
+from meshutils import decimate_mesh, clean_mesh, poisson_mesh_reconstruction
 from .utils import custom_meshgrid, safe_normalize
 
 def sample_pdf(bins, weights, n_samples, det=False):
@@ -149,44 +150,62 @@ class NeRFRenderer(nn.Module):
         self.local_step = 0
 
     @torch.no_grad()
-    def export_mesh(self, path, resolution=None, S=128):
+    def export_mesh(self, path, points=None, normals=None, resolution=None, decimate_target=-1, S=128):
 
-        if resolution is None:
-            resolution = self.grid_size
+        if points is not None:
+            vertices, triangles = poisson_mesh_reconstruction(points, normals)
 
-        if self.cuda_ray:
-            density_thresh = min(self.mean_density, self.density_thresh)
         else:
-            density_thresh = self.density_thresh
 
-        sigmas = np.zeros([resolution, resolution, resolution], dtype=np.float32)
+            if resolution is None:
+                resolution = self.grid_size
 
-        # query
-        X = torch.linspace(-1, 1, resolution).split(S)
-        Y = torch.linspace(-1, 1, resolution).split(S)
-        Z = torch.linspace(-1, 1, resolution).split(S)
+            if self.cuda_ray:
+                density_thresh = min(self.mean_density, self.density_thresh)
+            else:
+                density_thresh = self.density_thresh
+            
+            # very empirical...
+            if self.opt.density_activation == 'softplus':
+                density_thresh = density_thresh * 100
+            
+            
+            sigmas = np.zeros([resolution, resolution, resolution], dtype=np.float32)
 
-        for xi, xs in enumerate(X):
-            for yi, ys in enumerate(Y):
-                for zi, zs in enumerate(Z):
-                    xx, yy, zz = custom_meshgrid(xs, ys, zs)
-                    pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1) # [S, 3]
-                    val = self.density(pts.to(self.aabb_train.device))
-                    sigmas[xi * S: xi * S + len(xs), yi * S: yi * S + len(ys), zi * S: zi * S + len(zs)] = val['sigma'].reshape(len(xs), len(ys), len(zs)).detach().cpu().numpy() # [S, 1] --> [x, y, z]
+            # query
+            X = torch.linspace(-1, 1, resolution).split(S)
+            Y = torch.linspace(-1, 1, resolution).split(S)
+            Z = torch.linspace(-1, 1, resolution).split(S)
 
-        vertices, triangles = mcubes.marching_cubes(sigmas, density_thresh)
+            for xi, xs in enumerate(X):
+                for yi, ys in enumerate(Y):
+                    for zi, zs in enumerate(Z):
+                        xx, yy, zz = custom_meshgrid(xs, ys, zs)
+                        pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1) # [S, 3]
+                        val = self.density(pts.to(self.aabb_train.device))
+                        sigmas[xi * S: xi * S + len(xs), yi * S: yi * S + len(ys), zi * S: zi * S + len(zs)] = val['sigma'].reshape(len(xs), len(ys), len(zs)).detach().cpu().numpy() # [S, 1] --> [x, y, z]
 
-        vertices = vertices / (resolution - 1.0) * 2 - 1
+            print(f'[INFO] marching cubes thresh: {density_thresh} ({sigmas.min()} ~ {sigmas.max()})')
+
+            vertices, triangles = mcubes.marching_cubes(sigmas, density_thresh)
+            vertices = vertices / (resolution - 1.0) * 2 - 1
+        ############
+
+        # clean
         vertices = vertices.astype(np.float32)
         triangles = triangles.astype(np.int32)
+        vertices, triangles = clean_mesh(vertices, triangles)
+        
+        # decimation
+        if decimate_target > 0 and triangles.shape[0] > decimate_target:
+            vertices, triangles = decimate_mesh(vertices, triangles, decimate_target)
 
-        v = torch.from_numpy(vertices).to(self.aabb_train.device)
-        f = torch.from_numpy(triangles).int().to(self.aabb_train.device)
+        v = torch.from_numpy(vertices).contiguous().float().to(self.aabb_train.device)
+        f = torch.from_numpy(triangles).contiguous().int().to(self.aabb_train.device)
 
         # mesh = trimesh.Trimesh(vertices, triangles, process=False) # important, process=True leads to seg fault...
         # mesh.export(os.path.join(path, f'mesh.ply'))
 
-        # texture?
         def _export(v, f, h0=2048, w0=2048, ssaa=1, name=''):
             # v, f: torch Tensor
             device = v.device
@@ -200,8 +219,6 @@ class NeRFRenderer(nn.Module):
             import nvdiffrast.torch as dr
             from sklearn.neighbors import NearestNeighbors
             from scipy.ndimage import binary_dilation, binary_erosion
-
-            glctx = dr.RasterizeCudaContext()
 
             atlas = xatlas.Atlas()
             atlas.add_mesh(v_np, f_np)
@@ -224,6 +241,11 @@ class NeRFRenderer(nn.Module):
                 w = int(w0 * ssaa)
             else:
                 h, w = h0, w0
+            
+            if h <= 2048 and w <= 2048:
+                glctx = dr.RasterizeCudaContext()
+            else:
+                glctx = dr.RasterizeGLContext()
 
             rast, _ = dr.rasterize(glctx, uv.unsqueeze(0), ft, (h, w)) # [1, h, w, 4]
             xyzs, _ = dr.interpolate(v.unsqueeze(0), rast, f) # [1, h, w, 3]
@@ -233,42 +255,28 @@ class NeRFRenderer(nn.Module):
             xyzs = xyzs.view(-1, 3)
             mask = (mask > 0).view(-1)
             
-            sigmas = torch.zeros(h * w, device=device, dtype=torch.float32)
             feats = torch.zeros(h * w, 3, device=device, dtype=torch.float32)
 
             if mask.any():
                 xyzs = xyzs[mask] # [M, 3]
 
                 # batched inference to avoid OOM
-                all_sigmas = []
                 all_feats = []
                 head = 0
                 while head < xyzs.shape[0]:
                     tail = min(head + 640000, xyzs.shape[0])
                     results_ = self.density(xyzs[head:tail])
-                    all_sigmas.append(results_['sigma'].float())
                     all_feats.append(results_['albedo'].float())
                     head += 640000
 
-                sigmas[mask] = torch.cat(all_sigmas, dim=0)
                 feats[mask] = torch.cat(all_feats, dim=0)
             
-            sigmas = sigmas.view(h, w, 1)
             feats = feats.view(h, w, -1)
             mask = mask.view(h, w)
-
-            ### alpha mask
-            # deltas = 2 * np.sqrt(3) / 1024
-            # alphas = 1 - torch.exp(-sigmas * deltas)
-            # alphas_mask = alphas > 0.5
-            # feats = feats * alphas_mask
 
             # quantize [0.0, 1.0] to [0, 255]
             feats = feats.cpu().numpy()
             feats = (feats * 255).astype(np.uint8)
-
-            # alphas = alphas.cpu().numpy()
-            # alphas = (alphas * 255).astype(np.uint8)
 
             ### NN search as an antialiasing ...
             mask = mask.cpu().numpy()
@@ -288,14 +296,12 @@ class NeRFRenderer(nn.Module):
 
             feats[tuple(inpaint_coords.T)] = feats[tuple(search_coords[indices[:, 0]].T)]
 
-            # do ssaa after the NN search, in numpy
             feats = cv2.cvtColor(feats, cv2.COLOR_RGB2BGR)
 
+            # do ssaa after the NN search, in numpy
             if ssaa > 1:
-                # alphas = cv2.resize(alphas, (w0, h0), interpolation=cv2.INTER_NEAREST)
                 feats = cv2.resize(feats, (w0, h0), interpolation=cv2.INTER_LINEAR)
 
-            # cv2.imwrite(os.path.join(path, f'alpha.png'), alphas)
             cv2.imwrite(os.path.join(path, f'{name}albedo.png'), feats)
 
             # save obj (v, vt, f /)
@@ -441,17 +447,11 @@ class NeRFRenderer(nn.Module):
             loss_orient = weights.detach() * (normals * dirs).sum(-1).clamp(min=0) ** 2
             results['loss_orient'] = loss_orient.sum(-1).mean()
 
-            # surface normal smoothness
-            normals_perturb = self.normal(xyzs + torch.randn_like(xyzs) * 1e-2).view(N, -1, 3)
-            loss_smooth = (normals - normals_perturb).abs()
-            results['loss_smooth'] = loss_smooth.mean()
-
         # calculate weight_sum (mask)
         weights_sum = weights.sum(dim=-1) # [N]
         
         # calculate depth 
-        ori_z_vals = ((z_vals - nears) / (fars - nears)).clamp(0, 1)
-        depth = torch.sum(weights * ori_z_vals, dim=-1)
+        depth = torch.sum(weights * z_vals, dim=-1)
 
         # calculate color
         image = torch.sum(weights.unsqueeze(-1) * rgbs, dim=-2) # [N, 3], in [0, 1]
@@ -459,7 +459,6 @@ class NeRFRenderer(nn.Module):
         # mix background color
         if self.bg_radius > 0:
             # use the bg model to calculate bg_color
-            # sph = raymarching.sph_from_ray(rays_o, rays_d, self.bg_radius) # [N, 2] in [-1, 1]
             bg_color = self.background(rays_d.reshape(-1, 3)) # [N, 3]
         elif bg_color is None:
             bg_color = 1
@@ -515,27 +514,16 @@ class NeRFRenderer(nn.Module):
             counter.zero_() # set to 0
             self.local_step += 1
 
-            xyzs, dirs, deltas, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, counter, self.mean_count, perturb, 128, force_all_rays, dt_gamma, max_steps)
-
-            #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
-            
+            xyzs, dirs, ts, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb, dt_gamma, max_steps)
+            # plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
             sigmas, rgbs, normals = self(xyzs, dirs, light_d, ratio=ambient_ratio, shading=shading)
-
-            #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
-
-            weights_sum, depth, image = raymarching.composite_rays_train(sigmas, rgbs, deltas, rays, T_thresh)
-
+            weights, weights_sum, depth, image = raymarching.composite_rays_train(sigmas, rgbs, ts, rays, T_thresh)
+            
             # normals related regularizations
             if normals is not None:
-                # orientation loss (not very exact in cuda ray mode)
-                weights = 1 - torch.exp(-sigmas)
+                # orientation loss 
                 loss_orient = weights.detach() * (normals * dirs).sum(-1).clamp(min=0) ** 2
                 results['loss_orient'] = loss_orient.mean()
-
-                # surface normal smoothness
-                normals_perturb = self.normal(xyzs + torch.randn_like(xyzs) * 1e-2)
-                loss_smooth = (normals - normals_perturb).abs()
-                results['loss_smooth'] = loss_smooth.mean()
 
         else:
            
@@ -564,11 +552,9 @@ class NeRFRenderer(nn.Module):
                 # decide compact_steps
                 n_step = max(min(N // n_alive, 8), 1)
 
-                xyzs, dirs, deltas = raymarching.march_rays(n_alive, n_step, rays_alive, rays_t, rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, 128, perturb if step == 0 else False, dt_gamma, max_steps)
-
+                xyzs, dirs, ts = raymarching.march_rays(n_alive, n_step, rays_alive, rays_t, rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb if step == 0 else False, dt_gamma, max_steps)
                 sigmas, rgbs, normals = self(xyzs, dirs, light_d, ratio=ambient_ratio, shading=shading)
-
-                raymarching.composite_rays(n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
+                raymarching.composite_rays(n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, ts, weights_sum, depth, image, T_thresh)
 
                 rays_alive = rays_alive[rays_alive >= 0]
                 #print(f'step = {step}, n_step = {n_step}, n_alive = {n_alive}, xyzs: {xyzs.shape}')
@@ -577,9 +563,7 @@ class NeRFRenderer(nn.Module):
 
         # mix background color
         if self.bg_radius > 0:
-            
             # use the bg model to calculate bg_color
-            # sph = raymarching.sph_from_ray(rays_o, rays_d, self.bg_radius) # [N, 2] in [-1, 1]
             bg_color = self.background(rays_d) # [N, 3]
 
         elif bg_color is None:
@@ -588,7 +572,6 @@ class NeRFRenderer(nn.Module):
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
         image = image.view(*prefix, 3)
 
-        depth = torch.clamp(depth - nears, min=0) / (fars - nears)
         depth = depth.view(*prefix)
 
         weights_sum = weights_sum.reshape(*prefix)
