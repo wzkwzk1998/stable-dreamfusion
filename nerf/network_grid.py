@@ -68,9 +68,8 @@ class NeRFNetwork(NeRFRenderer):
     # add a density blob to the scene center
     def density_blob(self, x):
         # x: [B, N, 3]
-        
+        # NOTE: Dreamfusion just use blob_iters in the first few epoch, but we use it all the time for better performance
         d = (x ** 2).sum(-1)
-        # g = self.opt.blob_density * torch.exp(- d / (self.opt.blob_radius ** 2))
         g = self.opt.blob_density * (1 - torch.sqrt(d) / self.opt.blob_radius)
 
         return g
@@ -108,6 +107,8 @@ class NeRFNetwork(NeRFRenderer):
             normal = self.normal_net(enc)
             normal = safe_normalize(normal)
             normal = torch.nan_to_num(normal)
+            import pdb
+            pdb.set_trace()
 
             lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
 

@@ -1,12 +1,13 @@
-workspace: ./logs/dreamfusion_rendered_pig
+workspace: ./logs/dreamfusion_lego_with_albedo_2
 # experiment base setting
+comment: 'test lego with albedo all the time'
 O_machine: true
 cuda_ray: true
 dir_text: true
 
 # guidance setting
 guidance: stable-diffusion
-text: 'A high quality rendered pig'
+text: 'a lego man'
 
 # NeRF setting
 # Training Setting

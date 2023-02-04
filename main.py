@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
     parser = configargparse.ArgumentParser(config_file_parser_class=configargparse.YAMLConfigFileParser)
     parser.add_argument('--config', is_config_file=True,  help='config file path')
+    parser.add_argument('--comment', type=str, required=True, help='comment of this experiment')
     parser.add_argument('--text', default=None, help="text prompt")
     parser.add_argument('--negative', default='', type=str, help="negative text prompt")
     parser.add_argument('-O', '--O_machine', action='store_true', help="equals --fp16 --cuda_ray --dir_text")
@@ -43,7 +44,8 @@ if __name__ == '__main__':
     parser.add_argument('--albedo', action='store_true', help="only use albedo shading to train, overrides --albedo_iters")
     parser.add_argument('--albedo_iters', type=int, default=1000, help="training iters that only use albedo shading")
     parser.add_argument('--uniform_sphere_rate', type=float, default=0.5, help="likelihood of sampling camera location uniformly on the sphere surface area")
-    parser.add_argument('--use_diffusion_grad', action='store_true', help='set true to use diffusion gradient to calculate image gradient when training')
+    # test options
+    parser.add_argument('--test_shading', type=str, choices=['shading', 'textureless', 'albedo'], help='rendered shading or textureless video (only used when test)')
     # model options
     parser.add_argument('--bg_radius', type=float, default=1.4, help="if positive, use a background model at sphere(bg_radius)")
     parser.add_argument('--density_activation', type=str, default='softplus', choices=['softplus', 'exp'], help="density activation function")
@@ -71,7 +73,7 @@ if __name__ == '__main__':
     parser.add_argument('--N_rand', type=int, default=-1, help="set > 0 to enable ray sample when training, (not use in dreamfusion dataset)")
     
     ### dreamfusion  dataset options
-    parser.add_argument('--bound', type=float, default=1, help="assume the scene is bounded in box(bound_min, bound_max)")
+    parser.add_argument('--bound', type=float, default=1, help="assume the scene is bounded in box(-bound, bound)")
     parser.add_argument('--dt_gamma', type=float, default=0, help="dt_gamma (>=0) for adaptive ray marching. set to 0 to disable, >0 to accelerate rendering (but usually with worse quality)")
     parser.add_argument('--min_near', type=float, default=0.1, help="minimum near distance for camera")
     parser.add_argument('--radius_range', type=float, nargs='*', default=[1.0, 1.5], help="training camera radius range")
@@ -99,11 +101,9 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     if opt.O_machine:
-        # opt.fp16 = True
-        opt.fp16 = False
-        # TODO: dir_text for llffdataset
-        # opt.dir_text = True
-        # opt.cuda_ray = True
+        opt.fp16 = True
+        opt.dir_text = True
+        opt.cuda_ray = True
         
 
     elif opt.O2_machine:
@@ -122,6 +122,7 @@ if __name__ == '__main__':
         from nerf.network_grid import NeRFNetwork
     else:
         raise NotImplementedError(f'--backbone {opt.backbone} is not implemented!')
+
     print(opt)
 
     seed_everything(opt.seed)

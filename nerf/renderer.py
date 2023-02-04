@@ -104,6 +104,7 @@ class NeRFRenderer(nn.Module):
         self.min_near = opt.min_near
         self.density_thresh = opt.density_thresh
         self.bg_radius = opt.bg_radius
+        self.epoch_count = 0
 
         # prepare aabb with a 6D tensor (xmin, ymin, zmin, xmax, ymax, zmax)
         # NOTE: aabb (can be rectangular) is only used to generate points, we still rely on bound (always cubic) to calculate density grid and hashing.
@@ -489,7 +490,6 @@ class NeRFRenderer(nn.Module):
         rays_o = rays_o.contiguous().view(-1, 3)
         rays_d = rays_d.contiguous().view(-1, 3)
 
-
         N = rays_o.shape[0] # N = B * N, in fact
         device = rays_o.device
 
@@ -640,6 +640,13 @@ class NeRFRenderer(nn.Module):
         self.local_step = 0
 
         # print(f'[density grid] min={self.density_grid.min().item():.4f}, max={self.density_grid.max().item():.4f}, mean={self.mean_density:.4f}, occ_rate={(self.density_grid > density_thresh).sum() / (128**3 * self.cascade):.3f} | [step counter] mean={self.mean_count}')
+    
+    
+    def reset_epoch_count(self):
+        self.epoch_count = 0
+
+    def update_epoch_count(self):
+        self.epoch_count = self.epoch_count + 1
 
 
     def render(self, rays_o, rays_d, nears=None, fars=None, staged=False, max_ray_batch=4096, **kwargs):
