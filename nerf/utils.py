@@ -373,10 +373,10 @@ class Trainer(object):
             ambient_ratio = 1.0
         else: 
             rand = random.random()
-            if rand > 0.75: 
+            if rand > 0.8: 
                 shading = 'albedo'
                 ambient_ratio = 1.0
-            elif rand > 0.325: 
+            elif rand > 0.4: 
                 shading = 'textureless'
                 ambient_ratio = 0.1
             else: 
@@ -868,8 +868,6 @@ class Trainer(object):
         if self.local_rank == 0:
             pbar = tqdm.tqdm(total=len(loader) * loader.batch_size, bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
 
-        # import pdb 
-        # pdb.set_trace()
         with torch.no_grad():
             self.local_step = 0
 

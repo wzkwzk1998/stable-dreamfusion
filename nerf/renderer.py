@@ -61,9 +61,8 @@ def near_far_from_bound(rays_o, rays_d, bound, type='cube', min_near=0.05):
         near = radius - bound # [B, N, 1]
         far = radius + bound
 
-    # bounding_box [-1, 1]^3 in pytorch(not cuda)
     elif type == 'cube':
-        tmin = (-bound) / (rays_d + 1e-15) # [B, N, 3]
+        tmin = (-bound - rays_o) / (rays_d + 1e-15) # [B, N, 3]
         tmax = (bound - rays_o) / (rays_d + 1e-15)
         near = torch.where(tmin < tmax, tmin, tmax).max(dim=-1, keepdim=True)[0]
         far = torch.where(tmin > tmax, tmin, tmax).min(dim=-1, keepdim=True)[0]
@@ -378,11 +377,11 @@ class NeRFRenderer(nn.Module):
 
         if perturb:
             z_vals = z_vals + (torch.rand(z_vals.shape, device=device) - 0.5) * sample_dist
-            # z_vals = z_vals.clamp(nears, fars) # avoid out of bounds xyzs.
+            #z_vals = z_vals.clamp(nears, fars) # avoid out of bounds xyzs.
 
         # generate xyzs
         xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1) # [N, 1, 3] * [N, T, 1] -> [N, T, 3]
-        # xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
+        #xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
 
         #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
