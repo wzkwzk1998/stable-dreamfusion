@@ -125,7 +125,7 @@ if __name__ == '__main__':
 
     print(opt)
 
-    seed_everything(opt.seed)
+    # seed_everything(opt.seed)
 
     model = NeRFNetwork(opt)
 
