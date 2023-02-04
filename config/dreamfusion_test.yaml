@@ -1,6 +1,6 @@
-workspace: ./logs/dreamfusion_superman
+workspace: ./logs/dreamfusion_batchsize_test
 # experiment base setting
-comment: 'test superman with Imporved Magic3D'
+comment: 'test astronaut with Imporved Magic3D'
 O_machine: true
 cuda_ray: true
 dir_text: true
@@ -8,9 +8,11 @@ dir_text: true
 # guidance setting
 guidance: stable-diffusion
 # text: 'A bulldog is wearing a black pirate hat.'
-text: 'A superman'
+text: 'A high detailed rendered model of a astronaut'
 
 # NeRF setting
 # Training Setting
+lr: 1e-2
+optim: adam
 iters: 20000
 jitter_pose: true
