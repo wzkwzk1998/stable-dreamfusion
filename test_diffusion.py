@@ -9,7 +9,7 @@ pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
 pipe = pipe.to("cuda")
 
 prompt = "A high detailed pig, back view"
-image = pipe(prompt).images
+image = pipe(prompt, height=64, width=64).images
 print(len(image))
 image = image[0]
     

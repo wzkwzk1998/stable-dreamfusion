@@ -107,8 +107,6 @@ class NeRFNetwork(NeRFRenderer):
             normal = self.normal_net(enc)
             normal = safe_normalize(normal)
             normal = torch.nan_to_num(normal)
-            import pdb
-            pdb.set_trace()
 
             lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
 
