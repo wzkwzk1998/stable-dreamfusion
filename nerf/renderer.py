@@ -98,7 +98,7 @@ class NeRFRenderer(nn.Module):
         self.bound = opt.bound
         self.cascade = 1 + math.ceil(math.log2(opt.bound))
         # self.cascade = 1
-        self.grid_size = 128
+        self.grid_size = opt.grid_size
         self.cuda_ray = opt.cuda_ray
         self.min_near = opt.min_near
         self.density_thresh = opt.density_thresh

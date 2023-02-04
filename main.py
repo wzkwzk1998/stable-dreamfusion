@@ -52,10 +52,11 @@ if __name__ == '__main__':
     parser.add_argument('--density_thresh', type=float, default=0.1, help="threshold for density grid to be occupied")
     parser.add_argument('--blob_density', type=float, default=10, help="max (center) density for the density blob")
     parser.add_argument('--blob_radius', type=float, default=0.5, help="control the radius for the density blob")
+    parser.add_argument('--grid_size', type=int, default=128, help='size of occupancy grid')
     # network backbone
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
     parser.add_argument('--backbone', type=str, default='grid', choices=['grid', 'vanilla'], help="nerf backbone")
-    parser.add_argument('--optim', type=str, default='adan', choices=['adan', 'adam', 'adamw'], help="optimizer")
+    parser.add_argument('--optim', type=str, default='adam', choices=['adan', 'adam', 'adamw'], help="optimizer")
     parser.add_argument('--sd_version', type=str, default='2.1', choices=['1.5', '2.0', '2.1'], help="stable diffusion version")
     parser.add_argument('--hf_key', type=str, default=None, help="hugging face Stable diffusion model key")
     # rendering resolution in training, decrease this if CUDA OOM.
