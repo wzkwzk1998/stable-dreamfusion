@@ -22,5 +22,5 @@ W: 512
 # Training Setting
 iters: 20000
 jitter_pose: true
-full_resolution: false 
+full_resolution: true 
 scale_num: 8

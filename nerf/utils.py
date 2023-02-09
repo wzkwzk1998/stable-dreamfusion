@@ -447,6 +447,7 @@ class Trainer(object):
             assert W % scale_num == 0, "H must be divisible by scale"
             get_batch_data = lambda idx, x: x[..., idx * (N // (scale_num ** 2)) : (idx + 1) * (N // (scale_num ** 2)), : ]
             for i in range(int(scale_num ** 2)):
+                print(i)
                 rays_o_batch = get_batch_data(i, rays_o)
                 rays_d_batch = get_batch_data(i, rays_d)
                 nears_batch = get_batch_data(i, nears) if nears is not None else None
