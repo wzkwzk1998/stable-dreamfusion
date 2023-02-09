@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--albedo_iters', type=int, default=1000, help="training iters that only use albedo shading")
     parser.add_argument('--uniform_sphere_rate', type=float, default=0.5, help="likelihood of sampling camera location uniformly on the sphere surface area")
     parser.add_argument('--full_resolution', action='store_true', help='using full resolution to rendering')
+    parser.add_argument('--scale_num', type=int, default=1, help='scale when rendering patch by patch')
     # test options
     parser.add_argument('--test_shading', type=str, default='albedo', choices=['shading', 'textureless', 'albedo'], help='rendered shading or textureless video (only used when test)')
     # model options
