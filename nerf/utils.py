@@ -385,7 +385,11 @@ class Trainer(object):
 
         # _t = time.time()
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random
-        outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
+        if self.opt.full_res:
+            with torch.no_grad():
+                outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
+        else:
+            outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
         pred_rgb = outputs['image']
         # pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
         # torch.cuda.synchronize(); print(f'[TIME] nerf render {time.time() - _t:.4f}s')
@@ -422,6 +426,20 @@ class Trainer(object):
         if self.opt.lambda_orient > 0 and 'loss_orient' in outputs:
             loss_orient = outputs['loss_orient']
             loss = loss + self.opt.lambda_orient * loss_orient
+        
+        if self.opt.full_res:
+            # 1.loss backward to get rgb_gradient
+            self.scaler.scale(loss).backward()
+            rgb_gradient = pred_rgb.grad
+            # 2. render patch by patch
+            scale_num = self.opt.scale_num
+            assert H % scale_num == 0, "H must be divisible by scale"
+            assert W % scale_num == 0, "W must be divisible by scale"
+            h_pix_per_patch = H // scale_num
+            w_pix_per_patch = W // scale_num
+            # 3. assign gradient to rgb_patch (use backward)
+            # 4. return dummy loss
+        
 
         return pred_rgb, pred_ws, loss
     
