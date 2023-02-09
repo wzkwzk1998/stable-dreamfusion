@@ -1,4 +1,4 @@
-workspace: ./logs/dreamfusion_bunny_2
+workspace: ./logs/dreamfusion_bunny_3
 # experiment base setting
 comment: 'test superman with Imporved Magic3D'
 O_machine: true
