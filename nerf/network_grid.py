@@ -46,7 +46,7 @@ class NeRFNetwork(NeRFRenderer):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
 
-        self.encoder, self.in_dim = get_encoder('hashgrid', input_dim=3, log2_hashmap_size=19, desired_resolution=2048 * self.bound, interpolation='smoothstep')
+        self.encoder, self.in_dim = get_encoder('hashgrid', input_dim=3, log2_hashmap_size=19, desired_resolution=2048 * self.bound, interpolation='smoothstep', level_dim=4)
 
         self.sigma_net = MLP(self.in_dim, 4, hidden_dim, num_layers, bias=True)
         self.normal_net = MLP(self.in_dim, 3, hidden_dim, num_layers, bias=True)
@@ -90,7 +90,7 @@ class NeRFNetwork(NeRFRenderer):
 
         return sigma, albedo, enc
     
-    def forward(self, x, d, l=None, ratio=1, shading='albedo'):
+    def forward(self, x, d, l=None, ratio=1, shading='albedo', soft_light_ratio=0):
         # x: [N, 3], in [-bound, bound]
         # d: [N, 3], view direction, nomalized in [-1, 1]
         # l: [3], plane light direction, nomalized in [-1, 1]
@@ -110,12 +110,14 @@ class NeRFNetwork(NeRFRenderer):
 
             lambertian = ratio + (1 - ratio) * (normal @ l).clamp(min=0) # [N,]
 
-            if shading == 'textureless':
-                color = lambertian.unsqueeze(-1).repeat(1, 3)
-            elif shading == 'normal':
+            # if shading == 'textureless':
+            #     color = lambertian.unsqueeze(-1).repeat(1, 3)
+            if shading == 'normal':
                 color = (normal + 1) / 2
             else: # 'lambertian'
-                color = albedo * lambertian.unsqueeze(-1)
+                # NOTE: soft light aug
+                # color = soft_light_ratio * albedo * lambertian.unsqueeze(-1)
+                color = (soft_light_ratio + (1 - soft_light_ratio) * albedo) * lambertian.unsqueeze(-1)
             
         return sigma, color, normal
 

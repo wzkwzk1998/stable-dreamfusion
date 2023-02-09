@@ -98,7 +98,7 @@ class NeRFRenderer(nn.Module):
         self.bound = opt.bound
         self.cascade = 1 + math.ceil(math.log2(opt.bound))
         # self.cascade = 1
-        self.grid_size = 128
+        self.grid_size = 256
         self.cuda_ray = opt.cuda_ray
         self.min_near = opt.min_near
         self.density_thresh = opt.density_thresh
@@ -481,7 +481,7 @@ class NeRFRenderer(nn.Module):
         return results
 
 
-    def run_cuda(self, rays_o, rays_d, nears=None, fars=None, dt_gamma=0, light_d=None, ambient_ratio=1.0, shading='albedo', bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
+    def run_cuda(self, rays_o, rays_d, nears=None, fars=None, dt_gamma=0, light_d=None, ambient_ratio=1.0, shading='albedo', soft_light_ratio=0, bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: image: [B, N, 3], depth: [B, N]
 
@@ -515,7 +515,7 @@ class NeRFRenderer(nn.Module):
 
             xyzs, dirs, ts, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb, dt_gamma, max_steps)
             # plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
-            sigmas, rgbs, normals = self(xyzs, dirs, light_d, ratio=ambient_ratio, shading=shading)
+            sigmas, rgbs, normals = self(xyzs, dirs, light_d, ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio)
             weights, weights_sum, depth, image = raymarching.composite_rays_train(sigmas, rgbs, ts, rays, T_thresh)
             
             # normals related regularizations

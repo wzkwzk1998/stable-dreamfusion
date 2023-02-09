@@ -371,17 +371,24 @@ class Trainer(object):
         if self.global_step < self.opt.albedo_iters:
             shading = 'albedo'
             ambient_ratio = 1.0
+            soft_light_ratio = 0
         else: 
             rand = random.random()
             if rand > 0.8: 
                 shading = 'albedo'
                 ambient_ratio = 1.0
-            elif rand > 0.4: 
-                shading = 'textureless'
-                ambient_ratio = 0.1
-            else: 
+                soft_light_ratio = 0
+            # elif rand > 0.4: 
+            #     shading = 'textureless'
+            #     ambient_ratio = 0.1
+            # else: 
+            #     shading = 'lambertian'
+            #     ambient_ratio = 0.1
+            # NOTE: soft light aug
+            else:
                 shading = 'lambertian'
                 ambient_ratio = 0.1
+                soft_light_ratio = rand / 0.8   # norm to [0 ,1]
 
         # _t = time.time()
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random

@@ -44,8 +44,9 @@ if __name__ == '__main__':
     parser.add_argument('--albedo', action='store_true', help="only use albedo shading to train, overrides --albedo_iters")
     parser.add_argument('--albedo_iters', type=int, default=1000, help="training iters that only use albedo shading")
     parser.add_argument('--uniform_sphere_rate', type=float, default=0.5, help="likelihood of sampling camera location uniformly on the sphere surface area")
+    parser.add_argument('--full_resolution', action='store_true', help='using full resolution to rendering')
     # test options
-    parser.add_argument('--test_shading', type=str, choices=['shading', 'textureless', 'albedo'], help='rendered shading or textureless video (only used when test)')
+    parser.add_argument('--test_shading', type=str, default='albedo', choices=['shading', 'textureless', 'albedo'], help='rendered shading or textureless video (only used when test)')
     # model options
     parser.add_argument('--bg_radius', type=float, default=1.4, help="if positive, use a background model at sphere(bg_radius)")
     parser.add_argument('--density_activation', type=str, default='softplus', choices=['softplus', 'exp'], help="density activation function")
@@ -77,13 +78,13 @@ if __name__ == '__main__':
     parser.add_argument('--dt_gamma', type=float, default=0, help="dt_gamma (>=0) for adaptive ray marching. set to 0 to disable, >0 to accelerate rendering (but usually with worse quality)")
     parser.add_argument('--min_near', type=float, default=0.1, help="minimum near distance for camera")
     parser.add_argument('--radius_range', type=float, nargs='*', default=[1.0, 1.5], help="training camera radius range")
-    parser.add_argument('--fovy_range', type=float, nargs='*', default=[40, 70], help="training camera fovy range")
+    parser.add_argument('--fovy_range', type=float, nargs='*', default=[40, 70], help="training camera fovyk range")
     parser.add_argument('--dir_text', action='store_true', help="direction-encode the text prompt, by appending front/side/back/overhead view")
     parser.add_argument('--suppress_face', action='store_true', help="also use negative dir text prompt.")
     parser.add_argument('--angle_overhead', type=float, default=30, help="[0, angle_overhead] is the overhead region")
     parser.add_argument('--angle_front', type=float, default=60, help="[0, angle_front] is the front region, [180, 180+angle_front] the back region, otherwise the side region.")
 
-    parser.add_argument('--lambda_entropy', type=float, default=1e-3, help="loss scale for alpha entropy")
+    parser.add_argument('--lambda_entropy', type=float, default=1e-4, help="loss scale for alpha entropy")
     parser.add_argument('--lambda_opacity', type=float, default=0, help="loss scale for alpha value")
     parser.add_argument('--lambda_orient', type=float, default=1e-2, help="loss scale for orientation")
     parser.add_argument('--lambda_tv', type=float, default=1e-7, help="loss scale for total variation")
@@ -125,7 +126,7 @@ if __name__ == '__main__':
 
     print(opt)
 
-    # seed_everything(opt.seed)
+    seed_everything(opt.seed)
 
     model = NeRFNetwork(opt)
 
