@@ -116,7 +116,8 @@ class NeRFNetwork(NeRFRenderer):
                 color = (normal + 1) / 2
             else: # 'lambertian'
                 # NOTE: soft light aug
-                color = soft_light_ratio * albedo * lambertian.unsqueeze(-1)
+                # color = soft_light_ratio * albedo * lambertian.unsqueeze(-1)
+                color = (soft_light_ratio + (1 - soft_light_ratio) * albedo) * lambertian.unsqueeze(-1)
             
         return sigma, color, normal
 
