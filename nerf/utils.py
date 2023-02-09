@@ -392,12 +392,15 @@ class Trainer(object):
 
         # _t = time.time()
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random
-        if self.opt.full_res:
+        if self.opt.full_resolution:
             with torch.no_grad():
-                outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
+                outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
+                pred_rgb = outputs['image']
+                pred_rgb.requires_grad_(True)
         else:
-            outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
-        pred_rgb = outputs['image']
+            outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
+            pred_rgb = outputs['image']
+        
         # pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
         # torch.cuda.synchronize(); print(f'[TIME] nerf render {time.time() - _t:.4f}s')
         
@@ -434,19 +437,29 @@ class Trainer(object):
             loss_orient = outputs['loss_orient']
             loss = loss + self.opt.lambda_orient * loss_orient
         
-        if self.opt.full_res:
+        if self.opt.full_resolution:
             # 1.loss backward to get rgb_gradient
             self.scaler.scale(loss).backward()
             rgb_gradient = pred_rgb.grad
             # 2. render patch by patch
             scale_num = self.opt.scale_num
             assert H % scale_num == 0, "H must be divisible by scale"
-            assert W % scale_num == 0, "W must be divisible by scale"
-            h_pix_per_patch = H // scale_num
-            w_pix_per_patch = W // scale_num
-            # 3. assign gradient to rgb_patch (use backward)
+            assert W % scale_num == 0, "H must be divisible by scale"
+            get_batch_data = lambda idx, x: x[..., idx * (N // (scale_num ** 2)) : (idx + 1) * (N // (scale_num ** 2)), : ]
+            for i in range(int(scale_num ** 2)):
+                rays_o_batch = get_batch_data(i, rays_o)
+                rays_d_batch = get_batch_data(i, rays_d)
+                nears_batch = get_batch_data(i, nears) if nears is not None else None
+                fars_batch = get_batch_data(i, fars) if fars is not None else None
+                outputs = self.model.render(rays_o_batch, rays_d_batch, nears=nears_batch, fars=fars_batch, staged=False, perturb=True, bg_color=bg_color, \
+                    ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
+                pred_rgb_batch = outputs['image']
+                # 3. assign gradient to rgb_patch (use backward)
+                gradient_batch = get_batch_data(i, rgb_gradient)
+                pred_rgb_batch.backward(gradient=gradient_batch, retain_graph=True)
+            
             # 4. return dummy loss
-        
+            loss = torch.tensor(0.0, dtype=torch.float32).requires_grad_(True).to(self.device)
 
         return pred_rgb, pred_ws, loss
     

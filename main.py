@@ -103,7 +103,8 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     if opt.O_machine:
-        opt.fp16 = True
+        # opt.fp16 = True
+        opt.fp16=False
         opt.dir_text = True
         opt.cuda_ray = True
         
