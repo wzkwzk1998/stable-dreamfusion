@@ -371,21 +371,28 @@ class Trainer(object):
         if self.global_step < self.opt.albedo_iters:
             shading = 'albedo'
             ambient_ratio = 1.0
+            soft_light_ratio = 0
         else: 
             rand = random.random()
             if rand > 0.8: 
                 shading = 'albedo'
                 ambient_ratio = 1.0
-            elif rand > 0.4: 
-                shading = 'textureless'
-                ambient_ratio = 0.1
-            else: 
+                soft_light_ratio = 0
+            # elif rand > 0.4: 
+            #     shading = 'textureless'
+            #     ambient_ratio = 0.1
+            # else: 
+            #     shading = 'lambertian'
+            #     ambient_ratio = 0.1
+            # NOTE: soft light aug
+            else:
                 shading = 'lambertian'
                 ambient_ratio = 0.1
+                soft_light_ratio = rand / 0.8   # norm to [0 ,1]
 
         # _t = time.time()
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random
-        outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
         pred_rgb = outputs['image']
         # pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
         # torch.cuda.synchronize(); print(f'[TIME] nerf render {time.time() - _t:.4f}s')

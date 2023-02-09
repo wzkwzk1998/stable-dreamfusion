@@ -1,4 +1,4 @@
-workspace: ./logs/dreamfusion_superman_riding_horses
+workspace: ./logs/dreamfusion_bunny
 # experiment base setting
 comment: 'test superman with Imporved Magic3D'
 O_machine: true
@@ -8,7 +8,7 @@ dir_text: true
 # guidance setting
 guidance: stable-diffusion
 # text: 'A bulldog is wearing a black pirate hat.'
-text: 'a superman riding a horse'
+text: 'a baby bunny sitting on top of a stack of pancakes'
 
 # NeRF setting
 # Training Setting
