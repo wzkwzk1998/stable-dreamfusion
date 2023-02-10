@@ -394,9 +394,9 @@ class Trainer(object):
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random
         if self.opt.full_resolution:
             with torch.no_grad():
-                outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
-                pred_rgb = outputs['image']
-                pred_rgb.requires_grad_(True)
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    preds, _, _ = self.eval_step(data) 
+                    pred_rgb = preds.detach().clone().requires_grad_(True)
         else:
             outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
             pred_rgb = outputs['image']
@@ -439,7 +439,8 @@ class Trainer(object):
         
         if self.opt.full_resolution:
             # 1.loss backward to get rgb_gradient
-            self.scaler.scale(loss).backward()
+            # self.scaler.scale(loss).backward()
+            loss.backward()
             rgb_gradient = pred_rgb.grad
             # 2. render patch by patch
             scale_num = self.opt.scale_num
@@ -447,7 +448,6 @@ class Trainer(object):
             assert W % scale_num == 0, "H must be divisible by scale"
             get_batch_data = lambda idx, x: x[..., idx * (N // (scale_num ** 2)) : (idx + 1) * (N // (scale_num ** 2)), : ]
             for i in range(int(scale_num ** 2)):
-                print(i)
                 rays_o_batch = get_batch_data(i, rays_o)
                 rays_d_batch = get_batch_data(i, rays_d)
                 nears_batch = get_batch_data(i, nears) if nears is not None else None
@@ -457,7 +457,7 @@ class Trainer(object):
                 pred_rgb_batch = outputs['image']
                 # 3. assign gradient to rgb_patch (use backward)
                 gradient_batch = get_batch_data(i, rgb_gradient)
-                pred_rgb_batch.backward(gradient=gradient_batch, retain_graph=True)
+                pred_rgb_batch.backward(gradient=gradient_batch)
             
             # 4. return dummy loss
             loss = torch.tensor(0.0, dtype=torch.float32).requires_grad_(True).to(self.device)

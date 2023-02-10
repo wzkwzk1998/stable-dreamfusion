@@ -104,9 +104,9 @@ if __name__ == '__main__':
 
     if opt.O_machine:
         # opt.fp16 = True
-        opt.fp16=False
+        opt.fp16 = False
         opt.dir_text = True
-        opt.cuda_ray = True
+        opt.cuda_ray = False
         
 
     elif opt.O2_machine:

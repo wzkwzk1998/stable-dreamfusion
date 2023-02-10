@@ -1,9 +1,10 @@
-workspace: ./logs/dreamfusion_bunny_fullres
+workspace: ./logs/dreamfusion_bunny_fullres_3
 # experiment base setting
 comment: 'test superman with Imporved Magic3D'
 O_machine: true
 cuda_ray: true
 dir_text: true
+seed: 2023
 
 # guidance setting
 guidance: stable-diffusion
@@ -11,8 +12,8 @@ guidance: stable-diffusion
 text: 'a baby bunny sitting on top of a stack of pancakes'
 
 # dataset setting
-w: 64
-h: 64
+w: 512
+h: 512
 w_guidance: 512
 h_guidance: 512
 H: 512

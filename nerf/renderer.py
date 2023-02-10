@@ -463,9 +463,8 @@ class NeRFRenderer(nn.Module):
         elif bg_color is None:
             bg_color = 1
         
-        # TODO: test the background is harmful to vanilla nerf
-        bg_color = 0
-            
+        bg_color = 1
+        
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
 
         image = image.view(*prefix, 3)
@@ -567,6 +566,8 @@ class NeRFRenderer(nn.Module):
 
         elif bg_color is None:
             bg_color = 1
+        
+        bg_color = 1
 
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
         image = image.view(*prefix, 3)

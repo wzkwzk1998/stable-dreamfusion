@@ -1,16 +1,16 @@
-from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 import torch
+import requests
+from PIL import Image
+from diffusers import StableDiffusionDepth2ImgPipeline
 
-model_id = 'stabilityai/stable-diffusion-2-1'
+pipe = StableDiffusionDepth2ImgPipeline.from_pretrained(
+   "stabilityai/stable-diffusion-2-depth",
+   torch_dtype=torch.float16,
+).to("cuda")
 
-# Use the DPMSolverMultistepScheduler (DPM-Solver++) scheduler here instead
-pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
-pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-pipe = pipe.to("cuda")
+url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+init_image = Image.open(requests.get(url, stream=True).raw)
 
-prompt = "A high detailed pig, back view"
-image = pipe(prompt).images
-print(len(image))
-image = image[0]
-    
-image.save("lego_man_test.png")
+prompt = "two tigers"
+n_propmt = "bad, deformed, ugly, bad anotomy"
+image = pipe(prompt=prompt, image=init_image, negative_prompt=n_propmt, strength=0.7).images[0]
