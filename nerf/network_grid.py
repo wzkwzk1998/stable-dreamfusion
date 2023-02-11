@@ -26,13 +26,8 @@ class MLP(nn.Module):
     
     def forward(self, x):
         for l in range(self.num_layers):
-            try:
-                x = self.net[l](x)
-            except:
-                import pdb
-                pdb.set_trace()
+            x = self.net[l](x)
             if l != self.num_layers - 1:
-                # x = F.relu(x, inplace=True)
                 x = F.relu(x, inplace=True)
         return x
 

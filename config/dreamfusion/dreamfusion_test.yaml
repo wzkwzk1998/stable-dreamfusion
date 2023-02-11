@@ -1,4 +1,4 @@
-workspace: ./logs/dreamfusion_bunny_fullres_3
+workspace: ./logs/dreamfusion_superman_riding_horses
 # experiment base setting
 comment: 'test superman with Imporved Magic3D'
 O_machine: true
@@ -9,19 +9,11 @@ seed: 2023
 # guidance setting
 guidance: stable-diffusion
 # text: 'A bulldog is wearing a black pirate hat.'
-text: 'a baby bunny sitting on top of a stack of pancakes'
-
-# dataset setting
-w: 512
-h: 512
-w_guidance: 512
-h_guidance: 512
-H: 512
-W: 512
+text: 'a superman riding a horse'
 
 # NeRF setting
 # Training Setting
 iters: 20000
 jitter_pose: true
-full_resolution: true 
-scale_num: 8
+fullres: true
+scale_num: 2

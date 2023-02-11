@@ -3,6 +3,7 @@ import math
 import cv2
 import trimesh
 import numpy as np
+import time
 
 import torch
 import torch.nn as nn
@@ -97,8 +98,7 @@ class NeRFRenderer(nn.Module):
         self.opt = opt
         self.bound = opt.bound
         self.cascade = 1 + math.ceil(math.log2(opt.bound))
-        # self.cascade = 1
-        self.grid_size = 256
+        self.grid_size = 256 
         self.cuda_ray = opt.cuda_ray
         self.min_near = opt.min_near
         self.density_thresh = opt.density_thresh
@@ -470,12 +470,10 @@ class NeRFRenderer(nn.Module):
         image = image.view(*prefix, 3)
         depth = depth.view(*prefix)
 
-        mask = (nears < fars).reshape(*prefix)
-
         results['image'] = image
         results['depth'] = depth
+        results['weights'] = weights
         results['weights_sum'] = weights_sum
-        results['mask'] = mask
 
         return results
 
@@ -511,7 +509,17 @@ class NeRFRenderer(nn.Module):
             counter = self.step_counter[self.local_step % 16]
             counter.zero_() # set to 0
             self.local_step += 1
-
+            # print(rays_o)
+            # print(rays_d)
+            # print(self.bound)
+            # print(self.density_bitfield)
+            # print(self.cascade)
+            # print(self.grid_size)
+            # print(nears)
+            # print(fars)
+            # print(perturb)
+            # print(dt_gamma)
+            # print(max_steps)
             xyzs, dirs, ts, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb, dt_gamma, max_steps)
             # plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
             sigmas, rgbs, normals = self(xyzs, dirs, light_d, ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio)
@@ -522,6 +530,9 @@ class NeRFRenderer(nn.Module):
                 # orientation loss 
                 loss_orient = weights.detach() * (normals * dirs).sum(-1).clamp(min=0) ** 2
                 results['loss_orient'] = loss_orient.mean()
+            
+            # weights normalization
+            results['weights'] = weights
 
         else:
            
@@ -566,8 +577,6 @@ class NeRFRenderer(nn.Module):
 
         elif bg_color is None:
             bg_color = 1
-        
-        bg_color = 1
 
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
         image = image.view(*prefix, 3)
@@ -576,12 +585,9 @@ class NeRFRenderer(nn.Module):
 
         weights_sum = weights_sum.reshape(*prefix)
 
-        mask = (nears < fars).reshape(*prefix)
-
         results['image'] = image
         results['depth'] = depth
         results['weights_sum'] = weights_sum
-        results['mask'] = mask
 
         return results
 
