@@ -50,7 +50,7 @@ if __name__ == '__main__':
     # test options
     parser.add_argument('--test_shading', type=str, default='albedo', choices=['shading', 'textureless', 'albedo'], help='rendered shading or textureless video (only used when test)')
     # model options
-    parser.add_argument('--bg_radius', type=float, default=0, help="if positive, use a background model at sphere(bg_radius)")
+    parser.add_argument('--bg_radius', type=float, default=1.4, help="if positive, use a background model at sphere(bg_radius)")
     parser.add_argument('--density_activation', type=str, default='softplus', choices=['softplus', 'exp'], help="density activation function")
     parser.add_argument('--density_thresh', type=float, default=0.1, help="threshold for density grid to be occupied")
     parser.add_argument('--blob_density', type=float, default=10, help="max (center) density for the density blob")

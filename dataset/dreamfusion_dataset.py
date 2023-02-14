@@ -237,3 +237,6 @@ class DreamfusionDataset:
     def dataloader(self):
         loader = DataLoader(list(range(self.size)), batch_size=1, collate_fn=self.collate, shuffle=self.training, num_workers=0)
         return loader
+
+if __name__ == '__main':
+    print('asdf')

@@ -463,8 +463,6 @@ class NeRFRenderer(nn.Module):
         elif bg_color is None:
             bg_color = 1
         
-        bg_color = 1
-        
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
 
         image = image.view(*prefix, 3)
