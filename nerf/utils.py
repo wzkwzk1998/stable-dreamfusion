@@ -392,8 +392,18 @@ class Trainer(object):
 
         # _t = time.time()
         bg_color = torch.rand((B * N, 3), device=rays_o.device) # pixel-wise random
-        outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
-        pred_rgb = outputs['image']
+        if self.opt.full_resolution:
+            with torch.no_grad():
+                outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, \
+                    ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
+                pred_rgb = outputs['image']
+                pred_rgb = pred_rgb.detach().clone().requires_grad_(True)
+                pred_depth = outputs['depth'].reshape(B, 1, H, W)
+        else:
+            outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
+            pred_rgb = outputs['image']
+            pred_depth = outputs['depth'].reshape(B, 1, H, W)
+        
         # pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
         # torch.cuda.synchronize(); print(f'[TIME] nerf render {time.time() - _t:.4f}s')
         
@@ -404,33 +414,48 @@ class Trainer(object):
         loss = self.guidance.train_step(self.opt, data, self.condition_dict, pred_rgb)
         # torch.cuda.synchronize(); print(f'[TIME] total guiding {time.time() - _t:.4f}s')
 
-        # occupancy loss
-        # TODO: think the reconstruction of different loss
-        if self.opt.guidance != 'reconstruction':
-            pred_ws = outputs['weights_sum'].reshape(B, 1, H, W)
-        else:
-            pred_ws = outputs['weights_sum']
-
+        # regulization
         if self.opt.lambda_opacity > 0:
-            loss_opacity = (pred_ws ** 2).mean()
+            loss_opacity = (outputs['weights'] ** 2).mean()
             loss = loss + self.opt.lambda_opacity * loss_opacity
         # TODO: use opacity loss in dreamfusion paper. https://arxiv.org/abs/2209.14988
         # if self.opt.lambda_opacity > 0:
         #     loss_opacity = ((pred_ws + 0.01) ** 0.5).mean()
         #     loss = loss + self.opt.lambda_opacity * loss_opacity
-
         if self.opt.lambda_entropy > 0:
-            alphas = (pred_ws).clamp(1e-5, 1 - 1e-5)
+            alphas = outputs['weights'].clamp(1e-5, 1 - 1e-5)
             # alphas = alphas ** 2 # skewed entropy, favors 0 over 1
             loss_entropy = (- alphas * torch.log2(alphas) - (1 - alphas) * torch.log2(1 - alphas)).mean()
-                    
             loss = loss + self.opt.lambda_entropy * loss_entropy
-
         if self.opt.lambda_orient > 0 and 'loss_orient' in outputs:
             loss_orient = outputs['loss_orient']
             loss = loss + self.opt.lambda_orient * loss_orient
+        
+        # full_resolution
+        if self.opt.full_resolution:
+            # 1.loss backward to get rgb_gradient
+            self.scaler.scale(loss).backward()
+            rgb_gradient = pred_rgb.grad
+            # 2. render patch by patch
+            scale_num = int(self.opt.scale_num)
+            assert H % scale_num == 0, "H must be divisible by scale"
+            assert W % scale_num == 0, "H must be divisible by scale"
+            get_batch_data = lambda idx, x: x[..., idx * (N // (scale_num ** 2)) : (idx + 1) * (N // (scale_num ** 2)), : ]
+            for i in range(int(scale_num ** 2)):
+                rays_o_batch = get_batch_data(i, rays_o)
+                rays_d_batch = get_batch_data(i, rays_d)
+                nears_batch = get_batch_data(i, nears) if nears is not None else None
+                fars_batch = get_batch_data(i, fars) if fars is not None else None
+                outputs_batch = self.model.render(rays_o_batch, rays_d_batch, nears=nears_batch, fars=fars_batch, staged=False, perturb=True, bg_color=bg_color, \
+                    ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
+                pred_rgb_batch = outputs_batch['image']
+                gradient_batch = get_batch_data(i, rgb_gradient)
+                pred_rgb_batch.backward(gradient=gradient_batch)
+            
+            # 4. return dummy loss
+            loss = torch.tensor(0.0, dtype=torch.float32).requires_grad_(True).to(self.device)
 
-        return pred_rgb, pred_ws, loss
+        return pred_rgb, pred_depth, loss
     
     def post_train_step(self):
 
@@ -460,17 +485,9 @@ class Trainer(object):
         outputs = self.model.render(rays_o, rays_d, nears, fars, staged=True, perturb=False, bg_color=None, light_d=light_d, ambient_ratio=ambient_ratio, shading=shading, force_all_rays=True, **vars(self.opt))
         pred_rgb = outputs['image'].reshape(B, H, W, 3)
         pred_depth = outputs['depth'].reshape(B, H, W)
-        pred_ws = outputs['weights_sum'].reshape(B, H, W)
-        # mask_ws = outputs['mask'].reshape(B, H, W) # near < far
-
-        # loss_ws = pred_ws.sum() / mask_ws.sum()
-        # loss_ws = pred_ws.mean()
-
-        alphas = (pred_ws).clamp(1e-5, 1 - 1e-5)
-        # alphas = alphas ** 2 # skewed entropy, favors 0 over 1
-        loss_entropy = (- alphas * torch.log2(alphas) - (1 - alphas) * torch.log2(1 - alphas)).mean()
                 
-        loss = self.opt.lambda_entropy * loss_entropy
+        # dummy
+        loss = torch.zeros([1], device=pred_rgb.device, dtype=pred_rgb.dtype)
 
         return pred_rgb, pred_depth, loss
 

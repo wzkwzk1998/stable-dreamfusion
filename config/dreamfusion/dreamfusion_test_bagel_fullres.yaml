@@ -1,0 +1,27 @@
+workspace: ./logs/dreamfusion_bagel_fullres_2
+# experiment base setting
+comment: 'test superman with Imporved Magic3D'
+O_machine: true
+cuda_ray: false 
+dir_text: true
+seed: 0
+
+# guidance setting
+guidance: stable-diffusion
+# text: 'A bulldog is wearing a black pirate hat.'
+text: 'a bagel filled with cream cheese and lox'
+
+# dataset setting
+w: 512 
+h: 512 
+w_guidance: 512
+h_guidance: 512
+H: 512
+W: 512
+
+# NeRF setting
+# Training Setting
+iters: 20000
+jitter_pose: true
+full_resolution: true 
+scale_num: 8

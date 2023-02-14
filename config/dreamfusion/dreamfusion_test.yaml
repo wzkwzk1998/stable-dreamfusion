@@ -4,6 +4,7 @@ comment: 'test superman with Imporved Magic3D'
 O_machine: true
 cuda_ray: true
 dir_text: true
+seed: 2023
 
 # guidance setting
 guidance: stable-diffusion
@@ -14,3 +15,5 @@ text: 'a superman riding a horse'
 # Training Setting
 iters: 20000
 jitter_pose: true
+fullres: true
+scale_num: 2

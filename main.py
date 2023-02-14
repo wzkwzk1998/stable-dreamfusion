@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_ray_batch', type=int, default=4096, help="batch size of rays at inference to avoid OOM (only valid when not using --cuda_ray)")
     parser.add_argument('--albedo', action='store_true', help="only use albedo shading to train, overrides --albedo_iters")
     parser.add_argument('--albedo_iters', type=int, default=1000, help="training iters that only use albedo shading")
+    parser.add_argument('--jitter_pose', action='store_true', help="add jitters to the randomly sampled camera poses")
     parser.add_argument('--uniform_sphere_rate', type=float, default=0.5, help="likelihood of sampling camera location uniformly on the sphere surface area")
     parser.add_argument('--full_resolution', action='store_true', help='using full resolution to rendering')
     parser.add_argument('--scale_num', type=int, default=1, help='scale when rendering patch by patch')
@@ -57,7 +58,7 @@ if __name__ == '__main__':
     # network backbone
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
     parser.add_argument('--backbone', type=str, default='grid', choices=['grid', 'vanilla'], help="nerf backbone")
-    parser.add_argument('--optim', type=str, default='adan', choices=['adan', 'adam', 'adamw'], help="optimizer")
+    parser.add_argument('--optim', type=str, default='adan', choices=['adan', 'adam'], help="optimizer")
     parser.add_argument('--sd_version', type=str, default='2.1', choices=['1.5', '2.0', '2.1'], help="stable diffusion version")
     parser.add_argument('--hf_key', type=str, default=None, help="hugging face Stable diffusion model key")
     # rendering resolution in training, decrease this if CUDA OOM.
@@ -65,7 +66,6 @@ if __name__ == '__main__':
     parser.add_argument('--h', type=int, default=64, help="render height for NeRF in training")
     parser.add_argument('--w_guidance', type=int, default=512, help='guidance width')
     parser.add_argument('--h_guidance', type=int, default=512, help='guidance height')
-    parser.add_argument('--jitter_pose', action='store_true', help="add jitters to the randomly sampled camera poses")
 
     ### dataset options
     parser.add_argument('--datadir', type=str, default='', help='input data directory')
@@ -79,12 +79,13 @@ if __name__ == '__main__':
     parser.add_argument('--dt_gamma', type=float, default=0, help="dt_gamma (>=0) for adaptive ray marching. set to 0 to disable, >0 to accelerate rendering (but usually with worse quality)")
     parser.add_argument('--min_near', type=float, default=0.1, help="minimum near distance for camera")
     parser.add_argument('--radius_range', type=float, nargs='*', default=[1.0, 1.5], help="training camera radius range")
-    parser.add_argument('--fovy_range', type=float, nargs='*', default=[40, 70], help="training camera fovyk range")
+    parser.add_argument('--fovy_range', type=float, nargs='*', default=[40, 70], help="training camera fovy range")
     parser.add_argument('--dir_text', action='store_true', help="direction-encode the text prompt, by appending front/side/back/overhead view")
     parser.add_argument('--suppress_face', action='store_true', help="also use negative dir text prompt.")
     parser.add_argument('--angle_overhead', type=float, default=30, help="[0, angle_overhead] is the overhead region")
     parser.add_argument('--angle_front', type=float, default=60, help="[0, angle_front] is the front region, [180, 180+angle_front] the back region, otherwise the side region.")
 
+    ### regularizations
     parser.add_argument('--lambda_entropy', type=float, default=1e-4, help="loss scale for alpha entropy")
     parser.add_argument('--lambda_opacity', type=float, default=1e-5, help="loss scale for alpha value")
     parser.add_argument('--lambda_orient', type=float, default=1e-2, help="loss scale for orientation")
@@ -103,9 +104,10 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     if opt.O_machine:
-        opt.fp16 = True
+        # opt.fp16 = True
+        opt.fp16 = False
         opt.dir_text = True
-        opt.cuda_ray = True
+        # opt.cuda_ray = True 
         
 
     elif opt.O2_machine:

@@ -6,7 +6,7 @@ import tqdm
 import random
 import numpy as np
 from scipy.spatial.transform import Slerp, Rotation
-import raymarching
+
 import trimesh
 
 import torch
@@ -191,8 +191,7 @@ class DreamfusionDataset:
         
         self.cx = self.H / 2
         self.cy = self.W / 2
-        self.aabb_train = torch.FloatTensor([-opt.bound, -opt.bound, -opt.bound, opt.bound, opt.bound, opt.bound])
-        self.aabb_infer = self.aabb_train.clone()
+        
         # [debug] visualize poses
         # poses, dirs = rand_poses(100, self.device, radius_range=self.opt.radius_range, return_dirs=self.opt.dir_text, angle_overhead=self.opt.angle_overhead, angle_front=self.opt.angle_front, jitter=self.opt.jitter_pose, uniform_sphere_rate=1)
         # visualize_poses(poses.detach().cpu().numpy(), dirs.detach().cpu().numpy())
@@ -223,8 +222,7 @@ class DreamfusionDataset:
 
         # sample a low-resolution but full image
         rays = get_rays(poses, intrinsics, self.H, self.W, -1)
-        # near, far = raymarching.near_far_from_aabb(rays['rays_o'].contiguous().view(-1, 3), rays['rays_d'].contiguous().view(-1, 3),\
-        #                                         self.aabb_train if self.training else self.aabb_infer)
+
         data = {
             'H': self.H,
             'W': self.W,
@@ -239,3 +237,6 @@ class DreamfusionDataset:
     def dataloader(self):
         loader = DataLoader(list(range(self.size)), batch_size=1, collate_fn=self.collate, shuffle=self.training, num_workers=0)
         return loader
+
+if __name__ == '__main':
+    print('asdf')

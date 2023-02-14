@@ -243,6 +243,7 @@ class _march_rays_train(Function):
 
         # allocate based on M
         M = step_counter.item()
+        M = max(1, M)
         # print(M, N)
         # print(rays[:, 0].max())
 

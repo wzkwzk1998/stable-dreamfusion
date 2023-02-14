@@ -469,7 +469,6 @@ __global__ void kernel_march_rays_train(
     }
 
     //printf("[n=%d] step=%d, near=%f, far=%f, dt=%f, num_steps=%f\n", n, step, near, far, dt_min, (far - near) / dt_min);
-
     // write rays
     if (first_pass) {
         uint32_t point_index = atomicAdd(counter, step);
