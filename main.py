@@ -55,6 +55,7 @@ if __name__ == '__main__':
     parser.add_argument('--density_thresh', type=float, default=0.1, help="threshold for density grid to be occupied")
     parser.add_argument('--blob_density', type=float, default=10, help="max (center) density for the density blob")
     parser.add_argument('--blob_radius', type=float, default=0.5, help="control the radius for the density blob")
+    parser.add_argument('--grid_size', type=int, default=128, help='size of occupancy grid')
     # network backbone
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
     parser.add_argument('--backbone', type=str, default='grid', choices=['grid', 'vanilla'], help="nerf backbone")
@@ -70,6 +71,7 @@ if __name__ == '__main__':
     ### dataset options
     parser.add_argument('--datadir', type=str, default='', help='input data directory')
     parser.add_argument('--dataset_type', type=str, default='dreamfusion', choices=['llff', 'dreamfusion'])
+    parser.add_argument('--batch_size', type=int, default=1, help='dataset batch size')
     
     ### llff dataset options
     parser.add_argument('--N_rand', type=int, default=-1, help="set > 0 to enable ray sample when training, (not use in dreamfusion dataset)")
@@ -149,7 +151,7 @@ if __name__ == '__main__':
         else:
             ### Load test dataset
             if opt.dataset_type == 'dreamfusion':
-                test_loader = DreamfusionDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=100).dataloader()
+                test_loader = DreamfusionDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=100).dataloader(opt.batch_size)
             elif opt.dataset_type == 'llff':
                 test_loader = LlffDataset(opt.datadir, device=device, split='test', H=opt.H, W=opt.W).dataloader()
             trainer.test(test_loader)
@@ -161,7 +163,7 @@ if __name__ == '__main__':
     
     else:
         if opt.dataset_type == 'dreamfusion':
-            train_loader = DreamfusionDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=100).dataloader()
+            train_loader = DreamfusionDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=100).dataloader(opt.batch_size)
         elif opt.dataset_type == 'llff':
             train_loader = LlffDataset(opt.datadir, device=device, split='train', H=opt.h, W=opt.w, N_rand=opt.N_rand).dataloader()
 
@@ -210,7 +212,7 @@ if __name__ == '__main__':
         
         else:
             if opt.dataset_type == 'dreamfusion':
-                valid_loader = DreamfusionDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader()
+                valid_loader = DreamfusionDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader(opt.batch_size)
             elif opt.dataset_type == 'llff':
                 valid_loader = LlffDataset(opt.datadir, device=device, split='test').dataloader()
 
