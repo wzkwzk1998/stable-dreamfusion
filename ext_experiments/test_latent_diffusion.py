@@ -1,14 +1,14 @@
 import requests
 from PIL import Image
 from io import BytesIO
-from diffusers import StableDiffusionUpscalePipeline
+from diffusers import StableDiffusionUpscalePipeline, LDMSuperResolutionPipeline
 import torch
 import numpy as np
 
 
 # load model and scheduler
-model_id = "stabilityai/stable-diffusion-x4-upscaler"
-pipeline = StableDiffusionUpscalePipeline.from_pretrained(model_id, torch_dtype=torch.float16)
+model_id = "YiYiXu/latent-upscaler"
+pipeline = LDMSuperResolutionPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
 pipeline = pipeline.to("cuda")
 
 # let's download an  image
@@ -19,9 +19,8 @@ pipeline = pipeline.to("cuda")
 img_path = './test_imgs/blender_hotdog.png'
 # low_res_img = Image.open(img_path).convert('RGB').resize((128, 128))
 low_res_img = Image.open(img_path).convert("RGB")
-prompt = ""
 
-upscaled_image = pipeline(prompt=prompt, image=low_res_img).images[0]
+upscaled_image = pipeline(image=low_res_img).images[0]
 upscaled_image.save("./test_imgs/blender_l2h_img.png")
 low_res_img.save('./test_imgs/blender_l2img.png')
 upsampled_img = low_res_img.resize((512, 512))

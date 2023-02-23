@@ -298,7 +298,9 @@ class NeRFNetwork(NeRFRenderer):
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
         
-        sigma = self.common_forward(x)
+        # sigma = self.common_forward(x)
+        x_feature = self.encoder(x, bound=self.bound)
+        sigma, h = self.sigma_net(x_feature)
         
         return {
             'sigma': sigma,
@@ -306,7 +308,7 @@ class NeRFNetwork(NeRFRenderer):
         }
 
 
-    def background(self, d):
+    def background(self, x, d):
 
         h = self.encoder_bg(d) # [N, C]
         

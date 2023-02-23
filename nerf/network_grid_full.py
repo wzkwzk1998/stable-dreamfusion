@@ -9,20 +9,21 @@ from .renderer import NeRFRenderer
 
 class NeRFNetwork(NeRFRenderer):
     def __init__(self,
-                 encoding="hashgrid",
-                 encoding_dir="sphere_harmonics",
-                 encoding_bg="hashgrid",
-                 num_layers=2,
-                 hidden_dim=64,
-                 geo_feat_dim=15,
-                 num_layers_color=3,
-                 hidden_dim_color=64,
-                 num_layers_bg=2,
-                 hidden_dim_bg=64,
-                 bound=1,
-                 **kwargs,
-                 ):
-        super().__init__(bound, **kwargs)
+                opt,
+                encoding="hashgrid",
+                encoding_dir="sphere_harmonics",
+                encoding_bg="hashgrid",
+                num_layers=2,
+                hidden_dim=64,
+                geo_feat_dim=15,
+                num_layers_color=3,
+                hidden_dim_color=64,
+                num_layers_bg=2,
+                hidden_dim_bg=64,
+                bound=1,
+                **kwargs,
+                ):
+        super().__init__(opt)
 
         # sigma network
         self.num_layers = num_layers
@@ -92,7 +93,7 @@ class NeRFNetwork(NeRFRenderer):
             self.bg_net = None
 
 
-    def forward(self, x, d):
+    def forward(self, x, d, light_d=None, ratio=1, shading='albedo'):
         # x: [N, 3], in [-bound, bound]
         # d: [N, 3], nomalized in [-1, 1]
 
@@ -120,8 +121,9 @@ class NeRFNetwork(NeRFRenderer):
         
         # sigmoid activation for rgb
         color = torch.sigmoid(h)
+        normal = None
 
-        return sigma, color
+        return sigma, color, normal
 
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
@@ -133,7 +135,6 @@ class NeRFNetwork(NeRFRenderer):
             if l != self.num_layers - 1:
                 h = F.relu(h, inplace=True)
 
-        #sigma = F.relu(h[..., 0])
         sigma = trunc_exp(h[..., 0])
         geo_feat = h[..., 1:]
 

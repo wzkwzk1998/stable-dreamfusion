@@ -1,20 +1,20 @@
 # experiment base setting
-workspace: ./logs/reconstruction_instant-ngp
+workspace: ./logs/reconstruction_l2h
 comment: 'test instant-ngp full model'
 O_machine: true
 cuda_ray: false
 
 # data setting
-datadir: /data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data/flower 
+datadir: /data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data_lr2hr/flower 
 dataset_type: llff
 bound: 2
 N_rand: 1024
 
 # resolution setting
-w: 504
-h: 378
-W: 504
-H: 378
+w: 512 
+h: 512 
+W: 512 
+H: 512 
 
 # guidance setting
 guidance: reconstruction

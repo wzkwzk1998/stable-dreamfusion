@@ -17,46 +17,57 @@ from tqdm import tqdm
 import time
 from guidance.gradient_utils import SpecifyGradient
 
+
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     #torch.backends.cudnn.deterministic = True
     #torch.backends.cudnn.benchmark = True
 
+
 class StableDiffusionForSR(nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, sd_version='2.1', hf_key=None):
         super().__init__()
 
-        try:
-            with open('./TOKEN', 'r') as f:
-                self.token = f.read().replace('\n', '') # remove the last \n!
-                print(f'[INFO] loaded hugging face access token from ./TOKEN!')
-        except FileNotFoundError as e:
-            self.token = True
-            print(f'[INFO] try to load hugging face access token from the default place, make sure you have run `huggingface-cli login`.')
-        
+        # try:
+        #     with open('./TOKEN', 'r') as f:
+        #         self.token = f.read().replace('\n', '') # remove the last \n!
+        #         print(f'[INFO] loaded hugging face access token from ./TOKEN!')
+        # except FileNotFoundError as e:
+        #     self.token = True
+        #     print(f'[INFO] try to load hugging face access token from the default place, make sure you have run `huggingface-cli login`.')
         self.device = device
         self.num_train_timesteps = 1000
         self.min_step = int(self.num_train_timesteps * 0.02)
         self.max_step = int(self.num_train_timesteps * 0.98)
 
+        self.sd_version = sd_version
+        self.hf_key = hf_key
+        if hf_key is not None:
+            print(f'[INFO] using hugging face custom model key: {hf_key}')
+            model_key = hf_key
+        elif self.sd_version == '2.1':
+            model_key = "stabilityai/stable-diffusion-x4-upscaler"
+        else:
+            raise ValueError(f'Stable-diffusion version {self.sd_version} not supported.')
+
         print(f'[INFO] loading stable diffusion...')
-                
+
         # 1. Load the autoencoder model which will be used to decode the latents into image space. 
-        self.vae = AutoencoderKL.from_pretrained('stabilityai/stable-diffusion-x4-upscaler', subfolder="vae").to(self.device)
+        self.vae = AutoencoderKL.from_pretrained(model_key, subfolder="vae").to(self.device)
 
         # 2. Load the tokenizer and text encoder to tokenize and encode the text. 
-        self.tokenizer = CLIPTokenizer.from_pretrained('stabilityai/stable-diffusion-x4-upscaler', subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained('stabilityai/stable-diffusion-x4-upscaler', subfolder="text_encoder").to(self.device)
+        self.tokenizer = CLIPTokenizer.from_pretrained(model_key, subfolder="tokenizer")
+        self.text_encoder = CLIPTextModel.from_pretrained(model_key, subfolder="text_encoder").to(self.device)
 
         # 3. The UNet model for generating the latents.
-        self.unet = UNet2DConditionModel.from_pretrained('stabilityai/stable-diffusion-x4-upscaler', subfolder="unet").to(self.device)
+        self.unet = UNet2DConditionModel.from_pretrained(model_key, subfolder="unet").to(self.device)
 
         # 4. Create a scheduler for inference
         # self.scheduler = PNDMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=self.num_train_timesteps)
-        self.scheduler = PNDMScheduler.from_pretrained('stabilityai/stable-diffusion-x4-upscaler', subfolder="scheduler")
+        self.scheduler = PNDMScheduler.from_pretrained(model_key, subfolder="scheduler")
         self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
-        self.low_res_scheduler = DDPMScheduler.from_pretrained('stabilityai/stable-diffusion-x4-upscaler', subfolder='low_res_scheduler')
+        self.low_res_scheduler = DDPMScheduler.from_pretrained(model_key, subfolder='low_res_scheduler')
         
 
         self.vae.requires_grad_(False)
@@ -109,7 +120,7 @@ class StableDiffusionForSR(nn.Module):
                     elif d == 'overhead': negative_text += "face"
                     elif d == 'bottom': negative_text += "face"
                 
-                text_z_single = self.guidance.get_text_embeds([text], [negative_text])
+                text_z_single = self.get_text_embeds([text], [negative_text])
                 text_z.append(text_z_single)
         
         return text_z
@@ -174,12 +185,13 @@ class StableDiffusionForSR(nn.Module):
             image = torch.from_numpy(image).to(dtype=torch.float32) / 127.5 - 1.0
         elif isinstance(image, torch.Tensor):
             if image.ndim == 3:
-                image = image[None].transpose(0, 3, 1, 2)
+                image = image[None].permute(0, 3, 1, 2).contiguous()
             elif image.ndim == 4:
-                image = image.transpose(0, 3, 1, 2)
+                image = image.permute(0, 3, 1, 2).contiguous()
             else:
                 raise ValueError('Invalid image shape')
-            image = image.to(dtype=torch.float32) / 127.5 - 1.0         # scale to [-1, 1]
+            # image = image.to(dtype=torch.float32) / 127.5 - 1.0         # scale to [-1, 1]
+            image = image.to(dtype=torch.float32) * 2 - 1
 
         return image
         
@@ -207,7 +219,7 @@ class StableDiffusionForSR(nn.Module):
                     data,
                     condition_dict,
                     pred_rgb:torch.Tensor, 
-                    guidance_scale:float = 100,
+                    guidance_scale:float = 7.5,
                     noise_level: int = 20):
         '''
         pred_rgb: [0, 1]
@@ -231,12 +243,17 @@ class StableDiffusionForSR(nn.Module):
         # 2. prepare condition image
         # NOTE: the conditional image is from [-1 ~ 1]
         image = condition_dict['condition_image']
-        image = image * 2 - 1.0         # scale to [-1,1]
-        image = image.permute(0, 3, 1, 2).contiguous()
-        # add noise to image
+        image = self.prepare_image(image)
+        image = image.to(dtype=text_embeddings.dtype, device=self.device)
         noise_level = torch.tensor([noise_level], dtype=torch.long, device=self.device)
         noise = torch.randn(image.shape, device=self.device, dtype=text_embeddings.dtype)
-        image = self.low_res_scheduler.add_noise(image, noise, noise_level)
+        # image = self.low_res_scheduler.add_noise(image, noise, noise_level)
+        import PIL.Image as Image
+        import pdb
+        pdb.set_trace()
+        image_detach = ((image / 2) + 0.5).clamp(0, 1)
+        image_detach = (image * 255)[0].permute(1, 2, 0).contiguous().detach().cpu().numpy().astype('uint8')
+        Image.fromarray(image_detach).save('./test_imgs/noisy_image.png')
         image = torch.cat([image] * 2)
         noise_level = torch.cat([noise_level] * 2)
 
@@ -266,7 +283,7 @@ class StableDiffusionForSR(nn.Module):
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
-            # TODO: check the function here
+            # in PNDM schedular, this function will return the input directly
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
             # add the inpainting    
             latent_model_input = torch.cat([latent_model_input, image], dim=1)
@@ -287,11 +304,91 @@ class StableDiffusionForSR(nn.Module):
         grad = w * (noise_pred - noise)
         # grad = torch.nan_to_num(grad)
 
-        # clip grad for stable training?
-        # grad = grad.clamp(-1, 1)
-
         # manually backward, since we omitted an item in grad and cannot simply autodiff.
         loss = SpecifyGradient.apply(latents, grad)
+        
+        # inpainting mse loss
+        return loss
+
+
+    def forward(self, 
+                opt,
+                data,
+                condition_dict,
+                pred_rgb:torch.Tensor, 
+                guidance_scale:float = 7.5,
+                noise_level: int = 20):
+        
+        # 1. prepare text embeddigns and pred_rgb data
+        text_embeddings = condition_dict['text_z']
+        if opt.dir_text:
+            dirs = data['dir'] # [B,]
+            text_embeddings = text_embeddings[dirs]
+        else:
+            text_embeddings = text_embeddings
+        h_image = data['H']
+        w_image = data['W']
+        height = opt.h_guidance
+        width = opt.w_guidance
+        pred_rgb = pred_rgb.reshape((1, h_image, w_image, 3)).permute(0, 3, 1, 2).contiguous()
+        pred_rgb = F.interpolate(pred_rgb, (height, width), mode='bilinear', align_corners=False)
+        
+        # 2. prepare condition image
+        # NOTE: the conditional image is from [-1 ~ 1]
+        image = condition_dict['condition_image']
+        image = self.prepare_image(image) 
+        image = image.to(dtype=text_embeddings.dtype, device=self.device)
+        noise_level = torch.tensor([noise_level], dtype=torch.long, device=self.device)
+        noise = torch.randn(image.shape, device=self.device, dtype=text_embeddings.dtype)
+        image = self.low_res_scheduler.add_noise(image, noise, noise_level)
+        import PIL.Image as Image
+        import pdb
+        pdb.set_trace()
+        image_detach = ((image / 2) + 0.5).clamp(0, 1)
+        image_detach = (image * 255)[0].permute(1, 2, 0).contiguous().detach().cpu().numpy().astype('uint8')
+        Image.fromarray(image_detach).save('./test_imgs/noisy_image.png')
+        image = torch.cat([image] * 2)
+        noise_level = torch.cat([noise_level] * 2)
+
+        # encode image into latents with vae, requires grad!
+        num_channels_latents = self.vae.config.latent_channels
+        latents = self.encode_imgs(pred_rgb)
+
+        # Check that sizes of mask, masked image and latents match
+        num_channels_image = image.shape[1]
+        if num_channels_latents + num_channels_image != self.unet.config.in_channels:
+            raise ValueError(
+                f"Incorrect configuration settings! The config of `pipeline.unet`: {self.unet.config} expects"
+                f" {self.unet.config.in_channels} but received `num_channels_latents`: {num_channels_latents} +"
+                f" `num_channels_image`: {num_channels_image} "
+                f" = {num_channels_latents+num_channels_image}. Please verify the config of"
+                " `pipeline.unet` or your `image` input."
+            )
+
+        # predict the noise residual with unet, NO grad!
+        # TODO: the time step in here may need to adjust
+        # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
+        t = torch.randint(self.min_step, self.max_step + 1, [1], dtype=torch.long, device=self.device)
+        # with torch.no_grad():
+        # add noise
+        noise = torch.randn_like(latents)
+        latents_noisy = self.scheduler.add_noise(latents, noise, t)
+        # pred noise
+        latent_model_input = torch.cat([latents_noisy] * 2)
+        # in PNDM schedular, this function will return the input directly
+        latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+        # add the inpainting    
+        latent_model_input = torch.cat([latent_model_input, image], dim=1)
+
+        noise_pred = self.unet(
+            latent_model_input, t, encoder_hidden_states=text_embeddings, class_labels=noise_level
+        ).sample
+        
+        # perform guidance (high scale from paper!)
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+        loss = torch.mean((noise_pred - noise) ** 2)
         
         # inpainting mse loss
         return loss
@@ -306,7 +403,6 @@ class StableDiffusionForSR(nn.Module):
         if isinstance(negative_prompts, str):
             negative_prompts = [negative_prompts]
         text_embeddings = self.get_text_embeds(prompt=prompts, negative_prompt=negative_prompts)
-
 
         # 2. prepare image
         image = self.prepare_image(image)
@@ -387,25 +483,39 @@ if __name__ == '__main__':
     seed_everything(opt.seed)
 
     device = torch.device('cuda:0')
+    sd = StableDiffusionForSR(device)
 
     def download_image(url):
         response = requests.get(url)
         return PIL.Image.open(BytesIO(response.content)).convert("RGB")
 
-
     init_image_path = './test_imgs/llff.png'
-    low_res_image = PIL.Image.open('./test_imgs/llff.png').convert("RGB")
-
-
-    sd = StableDiffusionForSR(device)
-
+    low_res_image = PIL.Image.open('./test_imgs/llff_flower.png').convert("RGB")
+    low_res_image = torch.tensor(np.array(low_res_image) / 255.0)
     prompt = ''
     imgs = sd.img_sr(prompt, image=low_res_image)
     imgs = imgs[0]
+    PIL.Image.fromarray(((imgs.permute(1, 2, 0).contiguous().cpu().numpy()) * 255).astype('uint8')).save('./test_imgs/sr_diffusion_test_flower.png')
+
+    # prompt = ''
+    # imgs = sd.img_sr(prompt, image=low_res_image)
+    # imgs = imgs[0]
 
 
-    # visualize image
-    PIL.Image.fromarray(((imgs.permute(1, 2, 0).contiguous().cpu().numpy()) * 255).astype('uint8')).save('./test_imgs/sr_diffusion_test.png')
+    # # visualize image
+    # PIL.Image.fromarray(((imgs.permute(1, 2, 0).contiguous().cpu().numpy()) * 255).astype('uint8')).save('./test_imgs/sr_diffusion_test.png')
     
+    # width, height = low_res_image.size
+    # image_patch_cat = Image.new('RGB', (width * 4, height * 4))
+    # for i in range(2):
+    #     for j in range(2):
+    #         low_res_image_patch = low_res_image.crop((i * 64, j * 64, (i + 1) * 64, (j + 1) * 64))
+    #         imgs_patch = sd.img_sr(prompt, image=low_res_image_patch)[0]
+    #         imgs_patch = PIL.Image.fromarray(((imgs_patch.permute(1, 2, 0).contiguous().cpu().numpy()) * 255).astype('uint8'))
+    #         image_patch_cat.paste(imgs_patch, (i * 256, j * 256))
+
+    # image_patch_cat.save('./test_imgs/sr_diffusion_test_patch_cat.png')
+
+
 
 

@@ -1,6 +1,0 @@
-[INFO] Trainer: df | 2023-02-05_01-33-38 | cuda | fp16 | workspace
-[INFO] #parameters: 24480410
-[INFO] Loading latest checkpoint ...
-[WARN] No checkpoint found, model randomly initialized.
-==> Start Test, save results to workspace/results
-==> Finished Test.

@@ -1,5 +1,6 @@
 # experiment base setting
 workspace: ./logs/reconstruction_vanilla
+comment: 'test reconstruction with vanilla nerf'
 O2_machine: true
 
 # data setting
@@ -11,14 +12,21 @@ guidance: reconstruction
 # NeRF setting
 optim: adam
 
+# resolution setting
+h: 378
+w: 504
+H: 378
+W: 504
+N_rand: 1024
+
 # Training Setting
 iters: 15000
-eval_interval: 100
+eval_interval: 10 
 lr: 5e-3
 min_lr: 5e-4
 warm_iters: 100
-albedo_iters: 200001 
+albedo: true
 lambda_entropy: 0
 lambda_opacity: 0
 lambda_orient: 0
-lambda_smooth: 0
+lambda_tv: 0

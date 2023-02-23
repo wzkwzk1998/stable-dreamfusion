@@ -350,6 +350,7 @@ class NeRFRenderer(nn.Module):
         device = rays_o.device
 
         results = {}
+        aabb = self.aabb_train if self.training else self.aabb_infer
 
         # choose aabb
         # if nears == None or fars == None:
@@ -381,7 +382,7 @@ class NeRFRenderer(nn.Module):
 
         # generate xyzs
         xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1) # [N, 1, 3] * [N, T, 1] -> [N, T, 3]
-        #xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
+        xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
 
         #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
@@ -459,11 +460,14 @@ class NeRFRenderer(nn.Module):
         # mix background color
         if self.bg_radius > 0:
             # use the bg model to calculate bg_color
-            bg_color = self.background(rays_d.reshape(-1, 3)) # [N, 3]
+            # bg_color = self.background(xyzs, rays_d.reshape(-1, 3)) # [N, 3]
+            sph = raymarching.sph_from_ray(rays_o, rays_d, self.bg_radius)
+            bg_color = self.background(sph, rays_d.reshape(-1, 3))
         elif bg_color is None:
             bg_color = 1
         
         image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
+        image = torch.nan_to_num(image)
 
         image = image.view(*prefix, 3)
         depth = depth.view(*prefix)
@@ -507,17 +511,6 @@ class NeRFRenderer(nn.Module):
             counter = self.step_counter[self.local_step % 16]
             counter.zero_() # set to 0
             self.local_step += 1
-            # print(rays_o)
-            # print(rays_d)
-            # print(self.bound)
-            # print(self.density_bitfield)
-            # print(self.cascade)
-            # print(self.grid_size)
-            # print(nears)
-            # print(fars)
-            # print(perturb)
-            # print(dt_gamma)
-            # print(max_steps)
             xyzs, dirs, ts, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb, dt_gamma, max_steps)
             # plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
             sigmas, rgbs, normals = self(xyzs, dirs, light_d, ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio)

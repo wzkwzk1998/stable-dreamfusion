@@ -398,11 +398,11 @@ class Trainer(object):
                     ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
                 pred_rgb = outputs['image']
                 pred_rgb = pred_rgb.detach().clone().requires_grad_(True)
-                pred_depth = outputs['depth'].reshape(B, 1, H, W)
+                pred_depth = outputs['depth'].reshape(B, 1, -1)
         else:
             outputs = self.model.render(rays_o, rays_d, nears=nears, fars=fars, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, soft_light_ratio=soft_light_ratio, force_all_rays=True, **vars(self.opt))
             pred_rgb = outputs['image']
-            pred_depth = outputs['depth'].reshape(B, 1, H, W)
+            pred_depth = outputs['depth'].reshape(B, 1, -1)
         
         # pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [1, 3, H, W]
         # torch.cuda.synchronize(); print(f'[TIME] nerf render {time.time() - _t:.4f}s')
@@ -814,7 +814,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                pred_rgbs, pred_ws, loss = self.train_step(data)
+                pred_rgbs, pred_depth, loss = self.train_step(data)
          
             self.scaler.scale(loss).backward()
             self.post_train_step()

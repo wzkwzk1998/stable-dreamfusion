@@ -58,13 +58,13 @@ if __name__ == '__main__':
     parser.add_argument('--grid_size', type=int, default=128, help='size of occupancy grid')
     # network backbone
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
-    parser.add_argument('--backbone', type=str, default='grid', choices=['grid', 'vanilla'], help="nerf backbone")
+    parser.add_argument('--backbone', type=str, default='grid', choices=['grid', 'grid_full', 'vanilla'], help="nerf backbone")
     parser.add_argument('--optim', type=str, default='adan', choices=['adan', 'adam'], help="optimizer")
     parser.add_argument('--sd_version', type=str, default='2.1', choices=['1.5', '2.0', '2.1'], help="stable diffusion version")
     parser.add_argument('--hf_key', type=str, default=None, help="hugging face Stable diffusion model key")
     # rendering resolution in training, decrease this if CUDA OOM.
-    parser.add_argument('--w', type=int, default=64, help="render width for NeRF in training")
-    parser.add_argument('--h', type=int, default=64, help="render height for NeRF in training")
+    parser.add_argument('--w', type=int, default=64, help="render width for NeRF in training, use origin w when reconstruction")
+    parser.add_argument('--h', type=int, default=64, help="render height for NeRF in training, use origin h when reconstruction")
     parser.add_argument('--w_guidance', type=int, default=512, help='guidance width')
     parser.add_argument('--h_guidance', type=int, default=512, help='guidance height')
 
@@ -126,6 +126,8 @@ if __name__ == '__main__':
         from nerf.network import NeRFNetwork
     elif opt.backbone == 'grid':
         from nerf.network_grid import NeRFNetwork
+    elif opt.backbone == 'grid_full':
+        from nerf.network_grid_full import NeRFNetwork
     else:
         raise NotImplementedError(f'--backbone {opt.backbone} is not implemented!')
 
@@ -214,7 +216,7 @@ if __name__ == '__main__':
             if opt.dataset_type == 'dreamfusion':
                 valid_loader = DreamfusionDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=5).dataloader(opt.batch_size)
             elif opt.dataset_type == 'llff':
-                valid_loader = LlffDataset(opt.datadir, device=device, split='test').dataloader()
+                valid_loader = LlffDataset(opt.datadir, device=device, split='test', H=opt.H, W=opt.W).dataloader()
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, max_epoch)

@@ -3,9 +3,10 @@ import numpy as np
 import torch.nn as nn
 
 class ImageReconstruction(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, device) -> None:
         super().__init__()
         self.loss_fn = lambda pred_rgb, rgb_gt: torch.mean((pred_rgb - rgb_gt) ** 2)
+        self.device = device
     
     def train_step(self, 
                     opt,
