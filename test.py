@@ -1,15 +1,23 @@
 import torch
-import torch.nn.functional as F
+import numpy as np
 import PIL.Image as Image
 
 if __name__ == '__main__':
-    # img_path = '/data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data/room/images_8/DJI_20200226_143850_006.png'
-    # img_path = '/data5/wuzhongkai/proj/stable-dreamfusion/logs/dreamfusion_bunny_fullres_3/validation/df_ep0200_0005_rgb.png'
-    img_path = '/data5/wuzhongkai/data/dreamfusion_data/llff/nerf_llff_data/flower/images_8/image000.png'
-    img = Image.open(img_path).convert('RGB')
-    img = img.crop((200, 200, 328, 328))
-    # img.save('test_img.png')
-    # img = img.resize((1024, 1024))
-    # img = img.resize((128, 128))
+    # # load ./test_imgs/llff_flower.png
+    # img = Image.open('./test_imgs/llff_flower.png')
+    # # transform to tensor
+    # img = torch.tensor(np.array(img) / 255.0)
+    # # interpolate to 512x512
+    # img = torch.nn.functional.interpolate(img[None].permute(0, 3, 1, 2), size=(512, 512), mode='bilinear', align_corners=True).to(dtype=torch.float32)
+    # # save img
+    # Image.fromarray((img[0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)).save('./test_imgs/llff_flower_upsampling.png')
+
     
-    img.save('./test_imgs/llff_flower.png')
+    # load ./test_imgs/llff_flower.png, transform to tensor and interpolate to 512x512 and save it
+    img = Image.open('./test_imgs/llff_flower.png')
+    img = torch.tensor(np.array(img) / 255.0)
+    img = torch.nn.functional.interpolate(img[None].permute(0, 3, 1, 2), size=(512, 512), mode='bilinear', align_corners=True).to(dtype=torch.float32)
+    # save img
+    Image.fromarray((img[0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)).save('./test_imgs/llff_flower_upsampling.png') 
+
+
