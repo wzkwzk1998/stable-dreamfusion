@@ -1,5 +1,5 @@
 from transformers import CLIPTextModel, CLIPTokenizer, logging
-from diffusers import AutoencoderKL, UNet2DConditionModel, PNDMScheduler, DDIMScheduler
+from diffusers import AutoencoderKL, UNet2DConditionModel, PNDMScheduler, DDIMScheduler, DDPMScheduler
 from diffusers import StableDiffusionPipeline, DiffusionPipeline
 
 # suppress partial model loading warning
@@ -8,6 +8,7 @@ logging.set_verbosity_error()
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 import time
 import PIL.Image as Image
@@ -76,6 +77,8 @@ class StableDiffusion(DiffusionPipeline):
         
         # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
         # self.scheduler = PNDMScheduler.from_pretrained(model_key, subfolder="scheduler")
+        scheduler = DDPMScheduler.from_pretrained('stabilityai/stable-diffusion-2-1-base', subfolder="scheduler")
+        
 
         self.register_modules(
             vae=vae,
@@ -92,7 +95,6 @@ class StableDiffusion(DiffusionPipeline):
         self.num_train_timesteps = self.scheduler.config.num_train_timesteps
         self.min_step = int(self.num_train_timesteps * 0.02)
         self.max_step = int(self.num_train_timesteps * 0.98)
-        # self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
 
         print(f'[INFO] loaded stable diffusion!')
     
@@ -262,6 +264,66 @@ class StableDiffusion(DiffusionPipeline):
 
         self.vae.to(dtype=torch.float32)
         image = self.decode_latents(x0_latents)
+        if output_type == 'pil':
+            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            image = self.numpy_to_pil(image)
+        
+        return image
+
+
+    def img_t2i_from_interval(self, 
+            prompts, 
+            init_image: torch.Tensor,
+            height: int=512,
+            width: int=512,
+            from_step: int=200,
+            num_inference_steps=50, 
+            guidance_scale=7.5, 
+            negative_prompts='', 
+            output_type='pil'):
+
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        
+        if isinstance(negative_prompts, str):
+            negative_prompts = [negative_prompts]
+        text_embeddings = self.get_text_embeds(prompt=prompts, negative_prompt=negative_prompts)
+
+        
+        num_channels_latents = self.vae.config.latent_channels
+        latents = self.encode_imgs(init_image)
+        noise = torch.randn_like(latents)
+        from_step = torch.tensor([from_step], dtype=torch.long, device=self.device)
+        latents = self.scheduler.add_noise(latents, noise, from_step)
+
+        # decode latents and get image and save
+        image_noisy = self.decode_latents(latents)
+        image_noisy = image_noisy.cpu().permute(0, 2, 3, 1).float().numpy() 
+        image_noisy = self.numpy_to_pil(image_noisy)[0]
+        image_noisy.save(f'./test_imgs/noisy.png')
+        assert num_channels_latents == self.unet.config.in_channels
+
+        for i, t in tqdm(enumerate(self.scheduler.timesteps)):
+            # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
+            if t > from_step:
+                continue
+            latent_model_input = torch.cat([latents] * 2)
+
+            # predict the noise residual
+            with torch.no_grad():
+                noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings)['sample']
+
+            # perform guidance
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_text + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+            # compute the previous noisy sample x_t -> x_t-1
+            latents = self.scheduler.step(noise_pred, t, latents)['prev_sample']
+
+        
+        self.vae.to(dtype=torch.float32)
+        image = self.decode_latents(latents)
+
         if output_type == 'pil':
             image = image.cpu().permute(0, 2, 3, 1).float().numpy()
             image = self.numpy_to_pil(image)
