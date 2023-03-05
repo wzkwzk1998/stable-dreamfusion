@@ -187,7 +187,9 @@ class StableDiffusion(nn.Module):
         loss = SpecifyGradient.apply(latents, grad) 
         # torch.cuda.synchronize(); print(f'[TIME] guiding: backward {time.time() - _t:.4f}s')
 
-        return loss 
+        #NOTE: Return grad for debug, Don't forget to delete it
+        return loss, torch.mean((grad) ** 2).item()
+
 
     def produce_latents(self, text_embeddings, height=512, width=512, num_inference_steps=50, guidance_scale=7.5, latents=None):
 
