@@ -1,5 +1,6 @@
 from transformers import CLIPTextModel, CLIPTokenizer, logging
 from diffusers import AutoencoderKL, UNet2DConditionModel, PNDMScheduler, DDIMScheduler
+from diffusers import StableDiffusionPipeline, DiffusionPipeline
 
 # suppress partial model loading warning
 logging.set_verbosity_error()
@@ -9,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import time
+import PIL.Image as Image
 
 
 from torch.cuda.amp import custom_bwd, custom_fwd 
@@ -35,40 +37,62 @@ def seed_everything(seed):
     #torch.backends.cudnn.deterministic = True
     #torch.backends.cudnn.benchmark = True
 
-class StableDiffusion(nn.Module):
-    def __init__(self, device, sd_version='2.1', hf_key=None):
+class StableDiffusion(DiffusionPipeline):
+    def __init__(
+        self,
+        vae: AutoencoderKL,
+        text_encoder: CLIPTextModel,
+        tokenizer: CLIPTokenizer,
+        unet: UNet2DConditionModel,
+        scheduler,
+        # safety_checker: StableDiffusionSafetyChecker,
+        feature_extractor,
+        requires_safety_checker: bool = True,
+    ):
         super().__init__()
 
-        self.device = device
-        self.sd_version = sd_version
+        # self.device = device
+        # self.sd_version = sd_version
 
-        print(f'[INFO] loading stable diffusion...')
+        # print(f'[INFO] loading stable diffusion...')
         
-        if hf_key is not None:
-            print(f'[INFO] using hugging face custom model key: {hf_key}')
-            model_key = hf_key
-        elif self.sd_version == '2.1':
-            model_key = "stabilityai/stable-diffusion-2-1-base"
-        elif self.sd_version == '2.0':
-            model_key = "stabilityai/stable-diffusion-2-base"
-        elif self.sd_version == '1.5':
-            model_key = "runwayml/stable-diffusion-v1-5"
-        else:
-            raise ValueError(f'Stable-diffusion version {self.sd_version} not supported.')
+        # if hf_key is not None:
+        #     print(f'[INFO] using hugging face custom model key: {hf_key}')
+        #     model_key = hf_key
+        # elif self.sd_version == '2.1':
+        #     model_key = "stabilityai/stable-diffusion-2-1-base"
+        # elif self.sd_version == '2.0':
+        #     model_key = "stabilityai/stable-diffusion-2-base"
+        # elif self.sd_version == '1.5':
+        #     model_key = "runwayml/stable-diffusion-v1-5"
+        # else:
+        #     raise ValueError(f'Stable-diffusion version {self.sd_version} not supported.')
 
-        # Create model
-        self.vae = AutoencoderKL.from_pretrained(model_key, subfolder="vae").to(self.device)
-        self.tokenizer = CLIPTokenizer.from_pretrained(model_key, subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained(model_key, subfolder="text_encoder").to(self.device)
-        self.unet = UNet2DConditionModel.from_pretrained(model_key, subfolder="unet").to(self.device)
+        # # Create model
+        # self.vae = AutoencoderKL.from_pretrained(model_key, subfolder="vae").to(self.device)
+        # self.tokenizer = CLIPTokenizer.from_pretrained(model_key, subfolder="tokenizer")
+        # self.text_encoder = CLIPTextModel.from_pretrained(model_key, subfolder="text_encoder").to(self.device)
+        # self.unet = UNet2DConditionModel.from_pretrained(model_key, subfolder="unet").to(self.device)
         
-        self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
+        # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
         # self.scheduler = PNDMScheduler.from_pretrained(model_key, subfolder="scheduler")
+
+        self.register_modules(
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            unet=unet,
+            scheduler=scheduler,
+            # safety_checker=safety_checker,
+            feature_extractor=feature_extractor,
+        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.register_to_config(requires_safety_checker=requires_safety_checker)
 
         self.num_train_timesteps = self.scheduler.config.num_train_timesteps
         self.min_step = int(self.num_train_timesteps * 0.02)
         self.max_step = int(self.num_train_timesteps * 0.98)
-        self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
+        # self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
 
         print(f'[INFO] loaded stable diffusion!')
     
@@ -151,7 +175,8 @@ class StableDiffusion(nn.Module):
         # torch.cuda.synchronize(); print(f'[TIME] guiding: interp {time.time() - _t:.4f}s')
 
         # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
-        t = torch.randint(self.min_step, self.max_step + 1, [1], dtype=torch.long, device=self.device)
+        # t = torch.randint(self.min_step, self.max_step + 1, [1], dtype=torch.long, device=self.device)
+        t = torch.tensor([200], dtype=torch.long, device=self.device)
 
         # encode image into latents with vae, requires grad!
         # _t = time.time()
@@ -172,9 +197,10 @@ class StableDiffusion(nn.Module):
         # perform guidance (high scale from paper!)
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
         noise_pred = noise_pred_text + guidance_scale * (noise_pred_text - noise_pred_uncond)
+        alphas = self.scheduler.alphas_cumprod
 
         # w(t), sigma_t^2
-        w = (1 - self.alphas[t])
+        w = (1 - alphas[t])
         # w = self.alphas[t] ** 0.5 * (1 - self.alphas[t])
         grad = w * (noise_pred - noise)
 
@@ -187,8 +213,78 @@ class StableDiffusion(nn.Module):
         loss = SpecifyGradient.apply(latents, grad) 
         # torch.cuda.synchronize(); print(f'[TIME] guiding: backward {time.time() - _t:.4f}s')
 
-        #NOTE: Return grad for debug, Don't forget to delete it
-        return loss, torch.mean((grad) ** 2).item()
+        return loss, torch.mean(grad ** 2).item() 
+
+
+    @torch.no_grad()
+    def img_t2i_x0(
+            self, 
+            prompts, 
+            init_image: torch.Tensor,
+            height: int=512,
+            width: int=512,
+            start_from_step: int=200,
+            num_inference_steps=50, 
+            guidance_scale=100, 
+            negative_prompts='', 
+            noise_level=20, 
+            output_type='pil'):
+
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        
+        if isinstance(negative_prompts, str):
+            negative_prompts = [negative_prompts]
+        text_embeddings = self.get_text_embeds(prompt=prompts, negative_prompt=negative_prompts)
+
+        # encode image into latents with vae, requires grad!
+        num_channels_latents = self.vae.config.latent_channels
+        latents = self.encode_imgs(init_image)
+        noise = torch.randn_like(latents)
+        start_from_step = torch.tensor([start_from_step], dtype=torch.long, device=self.device)
+        latents = self.scheduler.add_noise(latents, noise, start_from_step)
+
+        if num_channels_latents != self.unet.config.in_channels:
+            raise ValueError(
+            )
+
+
+        latent_model_input = torch.cat([latents] * 2)
+        noise_pred = self.unet(
+            latent_model_input, start_from_step, encoder_hidden_states=text_embeddings
+        ).sample
+
+        # perform guidance (high scale from paper!)
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred = noise_pred_text + guidance_scale * (noise_pred_text - noise_pred_uncond)
+        alphas = self.scheduler.alphas_cumprod
+        x0_latents = (latents - ((1 - alphas[start_from_step]) ** 0.5) * noise_pred) * (1 / alphas[start_from_step])
+
+        self.vae.to(dtype=torch.float32)
+        image = self.decode_latents(x0_latents)
+        if output_type == 'pil':
+            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            image = self.numpy_to_pil(image)
+        
+        return image
+
+
+    @staticmethod
+    def numpy_to_pil(images):
+        """
+        Convert a numpy image or a batch of images to a PIL image.
+        """
+        if images.ndim == 3:
+            images = images[None, ...]
+        images = (images * 255).round().astype("uint8")
+        if images.shape[-1] == 1:
+            # special case for grayscale (single channel) images
+            pil_images = [Image.fromarray(image.squeeze(), mode="L") for image in images]
+        else:
+            pil_images = [Image.fromarray(image) for image in images]
+
+        return pil_images
+
 
 
     def produce_latents(self, text_embeddings, height=512, width=512, num_inference_steps=50, guidance_scale=7.5, latents=None):

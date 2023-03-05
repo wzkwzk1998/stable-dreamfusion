@@ -1,6 +1,9 @@
-from transformers import CLIPTextModel, CLIPTokenizer, logging
-from diffusers import AutoencoderKL, UNet2DConditionModel, PNDMScheduler
+from transformers import CLIPTextModel, CLIPTokenizer, logging, CLIPFeatureExtractor 
+from diffusers import AutoencoderKL, UNet2DConditionModel, PNDMScheduler, DDIMScheduler, LMSDiscreteScheduler
+from diffusers import DiffusionPipeline
+from diffusers.pipelines.stable_diffusion import StableDiffusionSafetyChecker
 import numpy as np
+from typing import Callable, List, Optional, Union
 
 # suppress partial model loading warning
 logging.set_verbosity_error()
@@ -18,46 +21,67 @@ def seed_everything(seed):
     #torch.backends.cudnn.deterministic = True
     #torch.backends.cudnn.benchmark = True
 
-class StableDiffusionForInpainting(nn.Module):
-    def __init__(self, device):
+class StableDiffusionForInpainting(DiffusionPipeline):
+    def __init__(
+        self,
+        vae: AutoencoderKL,
+        text_encoder: CLIPTextModel,
+        tokenizer: CLIPTokenizer,
+        unet: UNet2DConditionModel,
+        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
+        # safety_checker: StableDiffusionSafetyChecker,
+        feature_extractor: CLIPFeatureExtractor,
+        requires_safety_checker: bool = True,
+    ):
         super().__init__()
 
-        try:
-            with open('./TOKEN', 'r') as f:
-                self.token = f.read().replace('\n', '') # remove the last \n!
-                print(f'[INFO] loaded hugging face access token from ./TOKEN!')
-        except FileNotFoundError as e:
-            self.token = True
-            print(f'[INFO] try to load hugging face access token from the default place, make sure you have run `huggingface-cli login`.')
+        # try:
+        #     with open('./TOKEN', 'r') as f:
+        #         self.token = f.read().replace('\n', '') # remove the last \n!
+        #         print(f'[INFO] loaded hugging face access token from ./TOKEN!')
+        # except FileNotFoundError as e:
+        #     self.token = True
+        #     print(f'[INFO] try to load hugging face access token from the default place, make sure you have run `huggingface-cli login`.')
         
-        self.device = device
-        self.num_train_timesteps = 1000
-        self.min_step = int(self.num_train_timesteps * 0.02)
-        self.max_step = int(self.num_train_timesteps * 0.98)
+        # self.device = device
+        # self.num_train_timesteps = 1000
+        # self.min_step = int(self.num_train_timesteps * 0.02)
+        # self.max_step = int(self.num_train_timesteps * 0.98)
 
-        print(f'[INFO] loading stable diffusion...')
+        # print(f'[INFO] loading stable diffusion...')
                 
-        # 1. Load the autoencoder model which will be used to decode the latents into image space. 
-        self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="vae", use_auth_token=self.token).to(self.device)
+        # # 1. Load the autoencoder model which will be used to decode the latents into image space. 
+        # self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="vae", use_auth_token=self.token).to(self.device)
 
-        # 2. Load the tokenizer and text encoder to tokenize and encode the text. 
-        self.tokenizer = CLIPTokenizer.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="tokenizer", use_auth_token=self.token)
-        self.text_encoder = CLIPTextModel.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="text_encoder", use_auth_token=self.token).to(self.device)
+        # # 2. Load the tokenizer and text encoder to tokenize and encode the text. 
+        # self.tokenizer = CLIPTokenizer.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="tokenizer", use_auth_token=self.token)
+        # self.text_encoder = CLIPTextModel.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="text_encoder", use_auth_token=self.token).to(self.device)
 
-        # 3. The UNet model for generating the latents.
-        self.unet = UNet2DConditionModel.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="unet", use_auth_token=self.token).to(self.device)
+        # # 3. The UNet model for generating the latents.
+        # self.unet = UNet2DConditionModel.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="unet", use_auth_token=self.token).to(self.device)
 
-        # 4. Create a scheduler for inference
-        # self.scheduler = PNDMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=self.num_train_timesteps)
-        self.scheduler = PNDMScheduler.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="scheduler", use_auth_token=self.token)
-        self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
+        # # 4. Create a scheduler for inference
+        # # self.scheduler = PNDMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=self.num_train_timesteps)
+        # self.scheduler = PNDMScheduler.from_pretrained("stabilityai/stable-diffusion-2-inpainting", subfolder="scheduler", use_auth_token=self.token)
+        # self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
         
 
-        self.vae.requires_grad_(False)
-        self.text_encoder.requires_grad_(False)
-        self.unet.requires_grad_(False)
+        # self.vae.requires_grad_(False)
+        # self.text_encoder.requires_grad_(False)
+        # self.unet.requires_grad_(False)
 
-        print(f'[INFO] loaded stable diffusion!')
+        # print(f'[INFO] loaded stable diffusion!')
+        self.register_modules(
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            unet=unet,
+            scheduler=scheduler,
+            # safety_checker=safety_checker,
+            feature_extractor=feature_extractor,
+        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.register_to_config(requires_safety_checker=requires_safety_checker)
 
 
     def prepare_guidance_condition(self, opt):
@@ -68,20 +92,6 @@ class StableDiffusionForInpainting(nn.Module):
 
         return condition_dict
     
-    def prepare_guidance_condition_batch(self, opt, data):
-        condition_image = data['rgb_gt']
-        assert condition_image.shape[1] == opt.h_guidance and condition_image.shape[2] == opt.w_guidance
-        # TODO: mask will be provide in data in the future
-        mask = torch.zeros((opt.h_guidance, opt.w_guidance))
-        mask[opt.h_guidance // 2 - opt.h_guidance // 4 : opt.h_guidance // 2 + opt.h_guidance // 4,
-            opt.w_guidance // 2 - opt.w_guidance // 4 : opt.w_guidance // 2 + opt.w_guidance // 4] = 1
-        condition_dict_batch = {
-            'condition_image': condition_image.to(self.device),
-            'mask': mask.to(self.device),
-        }
-
-        return condition_dict_batch
-
         
     def prepare_text_embeddings(self, opt):
 
@@ -139,14 +149,9 @@ class StableDiffusionForInpainting(nn.Module):
 
 
     def decode_latents(self, latents):
-
         latents = 1 / 0.18215 * latents
-
-        with torch.no_grad():
-            imgs = self.vae.decode(latents).sample
-
+        imgs = self.vae.decode(latents).sample
         imgs = (imgs / 2 + 0.5).clamp(0, 1)
-        
         return imgs
 
     def encode_imgs(self, imgs):
@@ -398,7 +403,7 @@ class StableDiffusionForInpainting(nn.Module):
         
         # perform guidance (high scale from paper!)
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+        noise_pred = noise_pred_text + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
         # optimize for text
         # loss = ((noise_pred - noise) ** 2).mean()
@@ -537,8 +542,116 @@ class StableDiffusionForInpainting(nn.Module):
         return  torch.tensor(0, dtype=torch.float32).requires_grad_()
 
 
+
+    def img_inpainting_x0(
+            self, 
+            prompts, 
+            image,
+            mask_image,
+            init_image: torch.Tensor,
+            height: int=512,
+            width: int=512,
+            start_from_step: int=500,
+            num_inference_steps=50, 
+            guidance_scale=9.0, 
+            negative_prompts='', 
+            noise_level=20, 
+            output_type='pil'):
+
+
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        if isinstance(negative_prompts, str):
+            negative_prompts = [negative_prompts]
+        text_embeddings = self.get_text_embeds(prompt=prompts, negative_prompt=negative_prompts)
+
+        # 2. prepare image
+        mask, masked_image = self.prepare_mask_and_masked_image(image, mask_image)
+        mask, masked_image_latents = self.prepare_mask_latents(
+            mask, 
+            masked_image,
+            text_embeddings.shape[0] // 2,
+            height, 
+            width,
+            text_embeddings.dtype,
+            self.device,
+            None
+        )
+
+        # 3. create latents (random noise)
+        num_channels_latents = self.vae.config.latent_channels
+        latents = self.encode_imgs(init_image)
+        noise = torch.randn_like(latents)
+        start_from_step = torch.tensor([start_from_step], dtype=torch.long, device=self.device)
+        latents = self.scheduler.add_noise(latents, noise, start_from_step)
+
+        # 3. check input
+        num_channels_mask = mask.shape[1]
+        num_channels_masked_image = masked_image_latents.shape[1]
+        if num_channels_latents + num_channels_mask + num_channels_masked_image != self.unet.config.in_channels:
+            raise ValueError(
+                f"Incorrect configuration settings! The config of `pipeline.unet`: {self.unet.config} expects"
+                f" {self.unet.config.in_channels} but received `num_channels_latents`: {num_channels_latents} +"
+                f" `num_channels_mask`: {num_channels_mask} + `num_channels_masked_image`: {num_channels_masked_image}"
+                f" = {num_channels_latents+num_channels_masked_image+num_channels_mask}. Please verify the config of"
+                " `pipeline.unet` or your `mask_image` or `image` input."
+            )
+        
+
+        with torch.no_grad():
+            latent_model_input = torch.cat([latents] * 2)
+            latent_model_input = self.scheduler.scale_model_input(latent_model_input, start_from_step)
+            latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
+
+            # predict the noise residual
+            noise_pred = self.unet(latent_model_input, start_from_step, encoder_hidden_states=text_embeddings).sample
+
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond) 
+            
+            alphas = self.scheduler.alphas_cumprod
+            x0_latents = (latents - ((1 - alphas[start_from_step]) ** 0.5) * noise_pred) * (1 / alphas[start_from_step])
+
+        # Text embeds -> img latents
+        # self.scheduler.set_timesteps(num_inference_steps)
+        # for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+        #     print(f'time step is : {t}')
+        #     latent_model_input = torch.cat([latents] * 2)
+            
+        #     # in PNDM schedular, is function will return the input directly
+        #     latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+        #     latent_model_input = torch.cat([latent_model_input, image], dim=1)
+
+        #     # predict the noise residual
+        #     noise_pred = self.unet(
+        #         latent_model_input, t, encoder_hidden_states=text_embeddings, class_labels=noise_level
+        #     ).sample
+
+        #     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        #     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond) 
+
+        #     latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+        self.vae.to(dtype=torch.float32)
+        image = self.decode_latents(x0_latents)
+        if output_type == 'pil':
+            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            image = self.numpy_to_pil(image)
+        
+        return image
+
+
     @torch.no_grad()
-    def img_inpainting(self, prompts, image, mask_image, height=512, width=512, num_inference_steps=50, guidance_scale=7.5, negative_prompts=''):
+    def img_inpainting(self, 
+                        prompts, 
+                        image, 
+                        mask_image, 
+                        height=512, 
+                        width=512, 
+                        num_inference_steps=50, 
+                        guidance_scale=7.5, 
+                        negative_prompts='', 
+                        output_type='pil'):
 
         if isinstance(prompts, str):
             prompts = [prompts]
@@ -609,6 +722,9 @@ class StableDiffusionForInpainting(nn.Module):
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         image = self.decode_latents(latents)
+        if output_type == 'pil':
+            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            image = self.numpy_to_pil(image)
         
         return image
 
@@ -630,41 +746,47 @@ if __name__ == '__main__':
     # parser.add_argument('--steps', type=int, default=50)
     # opt = parser.parse_args()
     
-    seed_everything(opt.seed)
-
     def download_image(url):
         response = requests.get(url)
         return PIL.Image.open(BytesIO(response.content)).convert("RGB")
 
 
-    init_image_path = '/data5/wuzhongkai/proj/dreamfusion_repl/data/llff/nerf_llff_data/flower/images_8/image000.png'
-    init_image = PIL.Image.open(init_image_path).convert("RGB").resize((504, 360))
-    mask_image = PIL.Image.open('./mask_504x360.png').convert("L")
+    # img_url = "https://raw.githubusercontent.com/CompVis/latent-diffusion/main/data/inpainting_examples/overture-creations-5sI6fQgYIuo.png"
+    # mask_url = "https://raw.githubusercontent.com/CompVis/latent-diffusion/main/data/inpainting_examples/overture-creations-5sI6fQgYIuo_mask.png"
+    
+    # init_image = download_image(img_url).resize((512, 512))
+    # mask_image = download_image(mask_url).resize((512, 512))
+
+    init_image_path = './test_imgs/sr_diffusion_test_flower.png'
+    init_image = PIL.Image.open(init_image_path).convert("RGB")
 
     init_image = np.array(init_image) / 127.5 - 1.0
-    mask_image = np.array(mask_image) / 255
+    # mask_image = np.array(mask_image) / 255
     init_image = torch.Tensor([init_image]).permute(0, 3, 1, 2) 
-    mask_image = torch.Tensor([mask_image]).unsqueeze(0)
-
+    # mask_image = torch.Tensor([mask_image]).unsqueeze(0)
+    mask_image = torch.zeros((1, 512, 512)).to(dtype=torch.float32)
+    mask_image[:, 128:384, 128:384] = 1.0
 
     device = torch.device('cuda')
 
-    sd = StableDiffusionForInpainting(device)
+    sd = StableDiffusionForInpainting.from_pretrained('stabilityai/stable-diffusion-2-inpainting').to(device)
 
     prompt = "Face of a yellow cat, high resolution, sitting on a park bench"
-    imgs = sd.img_inpainting(prompt, image=init_image, mask_image=mask_image, height=360, width=504)
-    imgs = imgs[0]
+    imgs = sd.img_inpainting(prompt, image=init_image, mask_image=mask_image, height=512, width=512,\
+                            num_inference_steps=1)
+    img = imgs[0]
+    img.save('./test_imgs/llff_flower_inpainting_test.png')
 
 
     # visualize image
-    PIL.Image.fromarray(((imgs.permute(1, 2, 0).cpu().numpy()) * 255).round().astype('uint8')).save('./yellow_cat_inpainting.png')
+    # PIL.Image.fromarray(((imgs.permute(1, 2, 0).cpu().numpy()) * 255).round().astype('uint8')).save('./yellow_cat_inpainting.png')
 
-    imgs = sd.img_inpainting("", image=init_image, mask_image=mask_image, height=360, width=504)
-    imgs = imgs[0]
+    # imgs = sd.img_inpainting("", image=init_image, mask_image=mask_image, height=360, width=504)
+    # imgs = imgs[0]
 
 
-    # visualize image
-    PIL.Image.fromarray(((imgs.permute(1, 2, 0).cpu().numpy()) * 255).round().astype('uint8')).save('./yellow_cat_inpainting_no_prompt.png')
+    # # visualize image
+    # PIL.Image.fromarray(((imgs.permute(1, 2, 0).cpu().numpy()) * 255).round().astype('uint8')).save('./yellow_cat_inpainting_no_prompt.png')
 
 
 

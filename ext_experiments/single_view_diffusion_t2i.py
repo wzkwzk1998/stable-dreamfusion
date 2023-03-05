@@ -10,22 +10,18 @@ import numpy as np
 from easydict import EasyDict
 
 img_path = './test_imgs/llff_flower.png'
-iters = 20000
-save_path = './test_imgs/llff_l2img_sds_test.png'
+iters = 50000 
+save_path = './test_imgs/llff_l2img_sds_t2i.png'
 save_iters = 100 
 device = torch.device('cuda')
 
 
 if __name__ == '__main__':
     # process cond img
-    pred_rgb = cond_img.detach().clone()
-    pred_rgb = F.interpolate(pred_rgb[None].permute(0, 3, 1, 2), size=(512, 512), mode='bilinear', align_corners=True)
-    pred_rgb = pred_rgb.permute(0, 2, 3, 1).contiguous().to(dtype=torch.float32)
-    # rgb_temp = np.round((pred_rgb.permute(0, 2, 3, 1).contiguous().squeeze(0).detach().clone().cpu().numpy()).clip(0.0, 1.0) * 255).astype('uint8')
-    # Image.fromarray(rgb_temp).save('./test_imgs/rgb_temp.png')
+    # scale to [-1, 1]
     pred_rgb = ((torch.randn((1, 512, 512, 3)).clamp(-1.0, 1.0) + 1) / 2).to(device).requires_grad_(True)
     pred_rgb.requires_grad_(True)
-    guidance = StableDiffusion(device).to(device)
+    guidance = StableDiffusion.from_pretrained('stabilityai/stable-diffusion-2-1-base').to(device)
     optimizer = torch.optim.Adam([pred_rgb], lr=1e-3)
     opt = {
         'text': 'a rose',
@@ -40,17 +36,23 @@ if __name__ == '__main__':
         'W' : 512,
     }
     condition_dict = guidance.prepare_guidance_condition(opt)
+    grad_list = []
     
-    for i in trange(int(iters)):
+    pbar = trange(int(iters))
+    for i in pbar:
         optimizer.zero_grad()
         with torch.no_grad():
             pred_rgb.clamp_(0.0, 1.0)
-
         loss, grad = guidance.train_step(opt, data, condition_dict, pred_rgb, guidance_scale=100)
-        # loss = guidance(opt, data, condition_dict, pred_rgb, guidance_scale=100, noise_level=20)
         loss.backward()
         optimizer.step()
         if i % save_iters == 0:
             rgb_np = np.round((pred_rgb.detach().clone().squeeze(0).cpu().numpy()).clip(0.0, 1.0) * 255).astype('uint8')
             Image.fromarray(rgb_np).save(save_path)
-            print(f'save image at epoch : {i}')
+        if i % 1000 == 0 and i != 0:
+            print(f'loss : {sum(grad_list) / len(grad_list)}')
+            grad_list.clear()
+            
+        grad_list.append(grad)
+        
+        # pbar.set_description(f'loss : {sum(grad_list) / len(grad_list)}')
