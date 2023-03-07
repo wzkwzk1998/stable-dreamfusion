@@ -13,7 +13,7 @@ from easydict import EasyDict
 
 img_path = './test_imgs/llff_flower.png'
 iters = 50000
-save_path = './test_imgs/llff_flower_x0_fromnoise.png'
+save_path = './test_imgs/llff_flower_x0_fromnoise_t200.png'
 save_iters = 1 
 device = torch.device('cuda')
 
@@ -49,13 +49,13 @@ if __name__ == '__main__':
     
     for i in tqdm(range(iters)):
         with torch.no_grad():
-            # pred_rgb.clamp_(0.0, 1.0)
-            pred_rgb -= pred_rgb.min()
-            pred_rgb /= (pred_rgb.max() - pred_rgb.min() + 1e-10)
+            pred_rgb.clamp_(0.0, 1.0)
+            # pred_rgb -= pred_rgb.min()
+            # pred_rgb /= (pred_rgb.max() - pred_rgb.min() + 1e-10)
 
         optimizer.zero_grad()
         step = random.randint(20, 980)
-        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=980, output_type='tensor', score_type='image')
+        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=200, output_type='tensor', score_type='image')
         loss.backward()
         # print(f'pred_rgb grad : {pred_rgb.grad}')
         # import pdb; pdb.set_trace()
@@ -68,7 +68,7 @@ if __name__ == '__main__':
             pred_rgb_detach.save(save_path)
             x0 = x0.detach().cpu().permute(0, 2, 3, 1).float().numpy()
             x0 = guidance.numpy_to_pil(x0)[0]
-            x0.save('./test_imgs/x0_sr.png')
+            x0.save('./test_imgs/x0_sr_200.png')
         if i % 1000 == 0 and i != 0:
             print(f'loss : {sum(grad_list) / len(grad_list)}')
             grad_list.clear()
