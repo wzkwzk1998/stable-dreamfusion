@@ -11,9 +11,9 @@ from guidance.stable_diffusion import StableDiffusion
 import numpy as np
 from easydict import EasyDict
 
-img_path = './test_imgs/llff_flower.png'
+img_path = './test_imgs/llff_fern.png'
 iters = 50000
-save_path = './test_imgs/llff_flower_x0_fromnoise.png'
+save_path = './test_imgs/llff_fern_x0_fromnoise.png'
 save_iters = 1 
 device = torch.device('cuda')
 
@@ -52,7 +52,7 @@ if __name__ == '__main__':
             pred_rgb.clamp_(0.0, 1.0)
         optimizer.zero_grad()
         step = random.randint(20, 980)
-        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=step, output_type='tensor', score_type='image')
+        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=980, output_type='tensor', score_type='image')
         loss.backward()
         # print(f'pred_rgb grad : {pred_rgb.grad}')
         # import pdb; pdb.set_trace()
