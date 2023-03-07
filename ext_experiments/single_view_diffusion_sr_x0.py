@@ -68,7 +68,7 @@ if __name__ == '__main__':
             pred_rgb_detach.save(save_path)
             x0 = x0.detach().cpu().permute(0, 2, 3, 1).float().numpy()
             x0 = guidance.numpy_to_pil(x0)[0]
-            x0.save('./test_imgs/x0_sr.png')
+            x0.save('./test_imgs/x0_fern_sr.png')
         if i % 1000 == 0 and i != 0:
             print(f'loss : {sum(grad_list) / len(grad_list)}')
             grad_list.clear()
