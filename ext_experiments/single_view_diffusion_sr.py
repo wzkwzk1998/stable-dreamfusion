@@ -50,7 +50,9 @@ if __name__ == '__main__':
     for i in pbar:
         optimizer.zero_grad()
         with torch.no_grad():
-            pred_rgb.clamp_(0.0, 1.0)
+            pred_rgb -= pred_rgb.min()
+            pred_rbg /= (pred_rgb.max() - pred_rgb.min())
+            # pred_rgb.clamp_(0.0, 1.0)
 
         pred_rgb.requires_grad_(True)
         loss, grad = guidance.train_step(opt, data, condition_dict, pred_rgb, guidance_scale=0)
