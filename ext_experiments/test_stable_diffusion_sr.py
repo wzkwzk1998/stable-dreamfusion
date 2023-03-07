@@ -27,11 +27,11 @@ if __name__ == '__main__':
 
     prompt = ''
     imgs, interval = sd.img_sr(prompt, image=cond_img, num_inference_steps=50, save_interval=True)
-    import pdb; pdb.set_trace()
     x0_save_dir = os.path.join(save_path, f'x0')
     latentimg_save_dir = os.path.join(save_path, f'latent')
     os.makedirs(x0_save_dir, exist_ok=True)
     os.makedirs(latentimg_save_dir, exist_ok=True)
+    print('img len : {}'.format(len(interval['x0'])))
     for i in range(len(interval['x0'])):
         x0img = interval['x0'][i]
         latentimg = interval['latents'][i]

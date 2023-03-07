@@ -391,18 +391,19 @@ class StableDiffusionForSR(DiffusionPipeline):
         # inpainting mse loss
         return loss
     
-    @torch.no_grad()
+
     def img_sr_x0(
             self, 
             prompts, 
             image,
             init_image: torch.Tensor,
-            start_from_step: int,
+            from_step: int,
             num_inference_steps=50, 
             guidance_scale=9.0, 
             negative_prompts='', 
             noise_level=20, 
-            output_type='pil'):
+            output_type='pil',
+            score_type='noise'):
 
 
         if isinstance(prompts, str):
@@ -427,8 +428,8 @@ class StableDiffusionForSR(DiffusionPipeline):
         num_channels_latents = self.vae.config.latent_channels
         latents = self.encode_imgs(init_image)
         noise = torch.randn_like(latents)
-        start_from_step = torch.tensor([start_from_step], dtype=torch.long, device=self.device)
-        latents = self.scheduler.add_noise(latents, noise, start_from_step)
+        from_step = torch.tensor([from_step], dtype=torch.long, device=self.device)
+        latents_noisy = self.scheduler.add_noise(latents, noise, from_step)
 
         # 3. check input
         num_channels_image = image.shape[1]
@@ -442,67 +443,59 @@ class StableDiffusionForSR(DiffusionPipeline):
             )
         
 
-        latent_model_input = torch.cat([latents] * 2)
-        
-        # in PNDM schedular, is function will return the input directly
-        latent_model_input = torch.cat([latent_model_input, image], dim=1)
-        noise_pred = self.unet(
-            latent_model_input, start_from_step, encoder_hidden_states=text_embeddings, class_labels=noise_level
-        ).sample
+        with torch.no_grad():
+            latent_model_input = torch.cat([latents_noisy] * 2)
+            # in PNDM schedular, is function will return the input directly
+            latent_model_input = torch.cat([latent_model_input, image], dim=1)
+            noise_pred = self.unet(
+                latent_model_input, from_step, encoder_hidden_states=text_embeddings, class_labels=noise_level
+            ).sample
 
-        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-        alphas = self.scheduler.alphas_cumprod
-        x0_latents = (latents - ((1 - alphas[start_from_step]) ** 0.5) * noise_pred) * (1 / alphas[start_from_step])
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            alphas = self.scheduler.alphas_cumprod
+            z0_latents = (latents_noisy - ((1 - alphas[from_step]) ** 0.5) * noise_pred) * (1 / alphas[from_step] ** 0.5)
 
-        # Text embeds -> img latents
-        # self.scheduler.set_timesteps(num_inference_steps)
-        # for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-        #     print(f'time step is : {t}')
-        #     latent_model_input = torch.cat([latents] * 2)
-            
-        #     # in PNDM schedular, is function will return the input directly
-        #     latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-        #     latent_model_input = torch.cat([latent_model_input, image], dim=1)
-
-        #     # predict the noise residual
-        #     noise_pred = self.unet(
-        #         latent_model_input, t, encoder_hidden_states=text_embeddings, class_labels=noise_level
-        #     ).sample
-
-        #     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        #     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond) 
-
-        #     latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         self.vae.to(dtype=torch.float32)
-        image = self.decode_latents(x0_latents)
+        z02image = self.decode_latents(z0_latents)
+
         if output_type == 'pil':
-            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
-            image = self.numpy_to_pil(image)
+            z02image = z02image.cpu().permute(0, 2, 3, 1).float().numpy()
+            z02image = self.numpy_to_pil(z02image)
         
-        return image
+        if score_type == 'noise':
+            grad = noise_pred - noise
+            loss = SpecifyGradient.apply(latents, grad)
+        elif score_type == 'latents':
+            grad = latents - z0_latents
+            loss = SpecifyGradient.apply(latents, grad)
+        elif score_type == 'image':
+            grad = init_image - z02image
+            loss = SpecifyGradient.apply(init_image, grad)
+        else:
+            raise ValueError(f'Unknown score type {score_type}')
+        
+        # print(f'grad: {grad.mean() ** 2}')
+        # import pdb; pdb.set_trace()
+        
+        return loss, z02image 
 
 
-    @torch.no_grad()
-    def img_sr_x0(
+    def img_sr_x0_fromlatents(
             self, 
-            prompts, 
+            text_embeddings, 
             image,
-            init_image: torch.Tensor,
-            start_from_step: int,
+            latents: torch.Tensor,
+            from_step: int,
             num_inference_steps=50, 
             guidance_scale=9.0, 
-            negative_prompts='', 
             noise_level=20, 
             output_type='pil'):
 
-
-        if isinstance(prompts, str):
-            prompts = [prompts]
-        if isinstance(negative_prompts, str):
-            negative_prompts = [negative_prompts]
-        text_embeddings = self.get_text_embeds(prompt=prompts, negative_prompt=negative_prompts)
+        """
+        Optimize latent instead of image, inspired by latent-nerf and sjc
+        """
 
         # 2. prepare image
         image = self.prepare_image(image)
@@ -513,15 +506,11 @@ class StableDiffusionForSR(DiffusionPipeline):
         image = torch.cat([image] * 2)
         noise_level = torch.cat([noise_level] * 2)
 
-        # 3. create latents (random noise)
-        height, width = init_image.shape[2] // 4, init_image.shape[3] // 4
-        assert height == image.shape[2]
-        assert width == image.shape[3]
+        # 3. add noise to latents (random noise)
         num_channels_latents = self.vae.config.latent_channels
-        latents = self.encode_imgs(init_image)
         noise = torch.randn_like(latents)
-        start_from_step = torch.tensor([start_from_step], dtype=torch.long, device=self.device)
-        latents = self.scheduler.add_noise(latents, noise, start_from_step)
+        from_step = torch.tensor([from_step], dtype=torch.long, device=self.device)
+        latents_noisy = self.scheduler.add_noise(latents, noise, from_step)
 
         # 3. check input
         num_channels_image = image.shape[1]
@@ -535,48 +524,32 @@ class StableDiffusionForSR(DiffusionPipeline):
             )
         
 
-        latent_model_input = torch.cat([latents] * 2)
+        latent_model_input = torch.cat([latents_noisy] * 2)
         
-        # in PNDM schedular, is function will return the input directly
-        latent_model_input = torch.cat([latent_model_input, image], dim=1)
-        noise_pred = self.unet(
-            latent_model_input, start_from_step, encoder_hidden_states=text_embeddings, class_labels=noise_level
-        ).sample
+        with torch.no_grad():
+            # in PNDM schedular, is function will return the input directly
+            latent_model_input = torch.cat([latent_model_input, image], dim=1)
+            noise_pred = self.unet(
+                latent_model_input, from_step, encoder_hidden_states=text_embeddings, class_labels=noise_level
+            ).sample
 
-        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-        alphas = self.scheduler.alphas_cumprod
-        x0_latents = (latents - ((1 - alphas[start_from_step]) ** 0.5) * noise_pred) * (1 / alphas[start_from_step])
-
-        # Text embeds -> img latents
-        # self.scheduler.set_timesteps(num_inference_steps)
-        # for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-        #     print(f'time step is : {t}')
-        #     latent_model_input = torch.cat([latents] * 2)
-            
-        #     # in PNDM schedular, is function will return the input directly
-        #     latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-        #     latent_model_input = torch.cat([latent_model_input, image], dim=1)
-
-        #     # predict the noise residual
-        #     noise_pred = self.unet(
-        #         latent_model_input, t, encoder_hidden_states=text_embeddings, class_labels=noise_level
-        #     ).sample
-
-        #     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        #     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond) 
-
-        #     latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            alphas = self.scheduler.alphas_cumprod
+            z0_latents = (latents_noisy - ((1 - alphas[from_step]) ** 0.5) * noise_pred) * (1 / alphas[from_step])
 
         self.vae.to(dtype=torch.float32)
-        image = self.decode_latents(x0_latents)
+        z02image = self.decode_latents(z0_latents)
         if output_type == 'pil':
-            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
-            image = self.numpy_to_pil(image)
+            z02image = z02image.cpu().permute(0, 2, 3, 1).float().numpy()
+            z02image = self.numpy_to_pil(z02image)
         
-        return image
+        grad = latents - z0_latents 
+        loss = SpecifyGradient.apply(latents, grad)
         
-    
+        return loss, z02image 
+
+
     @torch.no_grad()
     def img_sr(self, 
             prompts, 
@@ -638,7 +611,6 @@ class StableDiffusionForSR(DiffusionPipeline):
         # Text embeds -> img latents
         self.scheduler.set_timesteps(num_inference_steps)
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-            print(f'time step is : {t}')
             latent_model_input = torch.cat([latents] * 2)
             
             # in PNDM schedular, is function will return the input directly
@@ -654,6 +626,7 @@ class StableDiffusionForSR(DiffusionPipeline):
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond) 
 
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            # save interval output
             if save_interval:
                 latents2img_interval = self.decode_latents(latents)
                 x0_latents = (latents - ((1 - alphas[t]) ** 0.5) * noise_pred) * (1 / alphas[t])
