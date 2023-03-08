@@ -482,6 +482,108 @@ class StableDiffusionForSR(DiffusionPipeline):
         return loss, z02image 
 
 
+    def img_sr_x0_hrguide(
+            self, 
+            prompts, 
+            image,
+            init_image: torch.Tensor,
+            hr_image: torch.Tensor,
+            from_step: int,
+            num_inference_steps=50, 
+            guidance_scale=9.0, 
+            negative_prompts='', 
+            noise_level=20, 
+            output_type='pil',
+            score_type='noise'):
+
+
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        if isinstance(negative_prompts, str):
+            negative_prompts = [negative_prompts]
+        text_embeddings = self.get_text_embeds(prompt=prompts, negative_prompt=negative_prompts)
+
+        # 2. prepare image
+        image = self.prepare_image(image)
+        image = image.to(dtype=text_embeddings.dtype, device=self.device)
+        noise_level = torch.tensor([noise_level], dtype=torch.long, device=self.device)
+        noise = torch.randn(image.shape, device=self.device, dtype=text_embeddings.dtype)
+        image = self.low_res_scheduler.add_noise(image, noise, noise_level)
+        image = torch.cat([image] * 2)
+        noise_level = torch.cat([noise_level] * 2)
+
+        # 3. create latents (random noise)
+        height, width = init_image.shape[2] // 4, init_image.shape[3] // 4
+        assert height == image.shape[2]
+        assert width == image.shape[3]
+        num_channels_latents = self.vae.config.latent_channels
+        latents = self.encode_imgs(init_image)
+        noise = torch.randn_like(latents)
+        from_step = torch.tensor([from_step], dtype=torch.long, device=self.device)
+        latents_noisy = self.scheduler.add_noise(latents, noise, from_step)
+        
+        # create hr latents
+        height, width = hr_image.shape[2] // 4, hr_image.shape[3] // 4
+        assert height == image.shape[2]
+        assert width == image.shape[3]
+        num_channels_latents = self.vae.config.latent_channels
+        hr_latents = self.encode_imgs(hr_image)
+        noise_hr = torch.randn_like(hr_latents)
+        from_step = torch.tensor([from_step], dtype=torch.long, device=self.device)
+        latents_noisy_hr = self.scheduler.add_noise(hr_latents, noise_hr, from_step)
+        
+
+        # check input
+        num_channels_image = image.shape[1]
+        if num_channels_latents + num_channels_image != self.unet.config.in_channels:
+            raise ValueError(
+                f"Incorrect configuration settings! The config of `pipeline.unet`: {self.unet.config} expects"
+                f" {self.unet.config.in_channels} but received `num_channels_latents`: {num_channels_latents} +"
+                f" `num_channels_image`: {num_channels_image} "
+                f" = {num_channels_latents+num_channels_image}. Please verify the config of"
+                " `pipeline.unet` or your `image` input."
+            )
+        
+
+        with torch.no_grad():
+            latent_model_input = torch.cat([latents_noisy_hr] * 2)
+            # in PNDM schedular, is function will return the input directly
+            latent_model_input = torch.cat([latent_model_input, image], dim=1)
+            noise_pred = self.unet(
+                latent_model_input, from_step, encoder_hidden_states=text_embeddings, class_labels=noise_level
+            ).sample
+
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            alphas = self.scheduler.alphas_cumprod
+            z0_latents_hr = (latents_noisy_hr - ((1 - alphas[from_step]) ** 0.5) * noise_pred) * (1 / alphas[from_step] ** 0.5)
+
+
+        self.vae.to(dtype=torch.float32)
+        z02image = self.decode_latents(z0_latents_hr)
+
+        if output_type == 'pil':
+            z02image = z02image.cpu().permute(0, 2, 3, 1).float().numpy()
+            z02image = self.numpy_to_pil(z02image)
+        
+        if score_type == 'noise':
+            grad = noise_pred - noise
+            loss = SpecifyGradient.apply(latents, grad)
+        elif score_type == 'latents':
+            grad = latents - z0_latents_hr 
+            loss = SpecifyGradient.apply(latents, grad)
+        elif score_type == 'image':
+            grad = init_image - z02image
+            loss = SpecifyGradient.apply(init_image, grad)
+        else:
+            raise ValueError(f'Unknown score type {score_type}')
+        
+        # print(f'grad: {grad.mean() ** 2}')
+        # import pdb; pdb.set_trace()
+        
+        return loss, z02image
+
+
     def img_sr_x0_fromlatents(
             self, 
             text_embeddings, 

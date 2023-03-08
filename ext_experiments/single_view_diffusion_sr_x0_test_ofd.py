@@ -13,7 +13,7 @@ from easydict import EasyDict
 
 img_path = './test_imgs/llff_flower.png'
 iters = 50000
-save_path = './test_imgs/llff_flower_x0_fromnoise_t200.png'
+save_path = './test_imgs/llff_flower_x0_fromnoise_t800.png'
 save_iters = 1 
 device = torch.device('cuda')
 
@@ -23,7 +23,10 @@ if __name__ == '__main__':
     cond_img = Image.open(img_path).convert('RGB')
     cond_img = torch.tensor(np.array(cond_img) / 255.0).to(device=device)
 
-    pred_rgb = (torch.zeros((1, 3, 512, 512))).to(device=device).requires_grad_(True)
+    pred_rgb = Image.open('./test_imgs/blender_l2up_img.png').convert('RGB')
+    pred_rgb = torch.tensor(np.array(pred_rgb) / 255.0).to(device=device)
+    pred_rgb = pred_rgb[None].permute(0, 3, 1, 2).to(dtype=torch.float32, device=device).requires_grad_(True)
+    # pred_rgb = (torch.ones((1, 3, 512, 512)) / 2.0).to(device=device).requires_grad_(True)
     # pred_rgb = Image.open('./test_imgs/llff_flower_upsampling.png').convert('RGB')
     # pred_rgb = torch.tensor(np.array(pred_rgb) / 255.0).to(device=device)
     # pred_rgb = pred_rgb[None].permute(0, 3, 1, 2).to(dtype=torch.float32, device=device).requires_grad_(True)
@@ -55,7 +58,7 @@ if __name__ == '__main__':
 
         optimizer.zero_grad()
         step = random.randint(20, 980)
-        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=200, output_type='tensor', score_type='image')
+        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=800, output_type='tensor', score_type='image')
         loss.backward()
         # print(f'pred_rgb grad : {pred_rgb.grad}')
         # import pdb; pdb.set_trace()
@@ -68,7 +71,7 @@ if __name__ == '__main__':
             pred_rgb_detach.save(save_path)
             x0 = x0.detach().cpu().permute(0, 2, 3, 1).float().numpy()
             x0 = guidance.numpy_to_pil(x0)[0]
-            x0.save('./test_imgs/x0_sr_200.png')
+            x0.save('./test_imgs/x0_sr_800.png')
         if i % 1000 == 0 and i != 0:
             print(f'loss : {sum(grad_list) / len(grad_list)}')
             grad_list.clear()

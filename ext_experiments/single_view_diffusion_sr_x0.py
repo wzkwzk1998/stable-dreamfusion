@@ -13,7 +13,7 @@ from easydict import EasyDict
 
 img_path = './test_imgs/llff_flower.png'
 iters = 50000
-save_path = './test_imgs/llff_flower_x0_fromnoise.png'
+save_path = './test_imgs/llff_flower_x0_fromnoise_hrguide.png'
 save_iters = 1 
 device = torch.device('cuda')
 
@@ -23,10 +23,13 @@ if __name__ == '__main__':
     cond_img = Image.open(img_path).convert('RGB')
     cond_img = torch.tensor(np.array(cond_img) / 255.0).to(device=device)
 
-    pred_rgb = (torch.zeros((1, 3, 512, 512))).to(device=device).requires_grad_(True)
+    pred_rgb = (torch.ones((1, 3, 512, 512)) / 2.0).to(device=device).requires_grad_(True)
     # pred_rgb = Image.open('./test_imgs/llff_flower_upsampling.png').convert('RGB')
     # pred_rgb = torch.tensor(np.array(pred_rgb) / 255.0).to(device=device)
     # pred_rgb = pred_rgb[None].permute(0, 3, 1, 2).to(dtype=torch.float32, device=device).requires_grad_(True)
+    hr_rgb = Image.open('./test_imgs/blender_l2up_img.png').convert('RGB')
+    hr_rgb = torch.tensor(np.array(hr_rgb) / 255.0).to(device=device)
+    hr_rgb = hr_rgb[None].permute(0, 3, 1, 2).to(dtype=torch.float32, device=device).requires_grad_(True)
 
     guidance = StableDiffusionForSR.from_pretrained('stabilityai/stable-diffusion-x4-upscaler').to(device)
     optimizer = torch.optim.Adam([pred_rgb], lr=1e-3)
@@ -49,13 +52,14 @@ if __name__ == '__main__':
     
     for i in tqdm(range(iters)):
         with torch.no_grad():
-            # pred_rgb.clamp_(0.0, 1.0)
-            pred_rgb -= pred_rgb.min()
-            pred_rgb /= (pred_rgb.max() - pred_rgb.min() + 1e-10)
+            pred_rgb.clamp_(0.0, 1.0)
+            # pred_rgb -= pred_rgb.min()
+            # pred_rgb /= (pred_rgb.max() - pred_rgb.min() + 1e-10)
 
         optimizer.zero_grad()
-        step = random.randint(20, 980)
-        loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=980, output_type='tensor', score_type='image')
+        step = random.randint(20, 500)
+        # loss, x0 = guidance.img_sr_x0(prompts='', image=cond_img, init_image=pred_rgb, from_step=980, output_type='tensor', score_type='image')
+        loss, x0 = guidance.img_sr_x0_hrguide(prompts='', image=cond_img, init_image=pred_rgb, hr_image=hr_rgb, from_step=step, output_type='tensor', score_type='image')
         loss.backward()
         # print(f'pred_rgb grad : {pred_rgb.grad}')
         # import pdb; pdb.set_trace()
@@ -68,7 +72,7 @@ if __name__ == '__main__':
             pred_rgb_detach.save(save_path)
             x0 = x0.detach().cpu().permute(0, 2, 3, 1).float().numpy()
             x0 = guidance.numpy_to_pil(x0)[0]
-            x0.save('./test_imgs/x0_fern_sr.png')
+            x0.save('./test_imgs/x0_sr_guide.png')
         if i % 1000 == 0 and i != 0:
             print(f'loss : {sum(grad_list) / len(grad_list)}')
             grad_list.clear()
